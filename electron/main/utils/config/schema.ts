@@ -1,7 +1,7 @@
 /**
  * Config schema — TypeScript interfaces for all configuration sections.
  *
- * These interfaces define the shape of the config.json file.
+ * These interfaces define the shape of the Config file.
  * Each section groups related settings together.
  */
 
@@ -21,7 +21,7 @@ export interface UIConfig {
   openDevTools: boolean
   /** Minimum log level */
   logLevel: 'debug' | 'info' | 'warn' | 'error'
-  /** Write per-request session logs to {userData}/logs/ */
+  /** Write per-request session logs to {userData}/Logs/ */
   debugLog: boolean
 }
 

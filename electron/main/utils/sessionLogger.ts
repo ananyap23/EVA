@@ -5,7 +5,7 @@
  * SessionLogger for every `executeCommand()`. Each pipeline stage
  * (intent classification, LLM calls, actions, streaming) appends
  * timestamped entries. On `flush()`, the full log is written to
- * `{userData}/logs/session_{ISO}.log`.
+ * `{userData}/Logs/session_{ISO}.log`.
  *
  * Zero overhead when disabled — the logger is simply not instantiated.
  */
@@ -101,7 +101,7 @@ export class SessionLogger {
 
 /** Get the logs directory path */
 export function getLogsDir(): string {
-  return path.join(app.getPath('userData'), 'logs')
+  return path.join(app.getPath('userData'), 'Logs')
 }
 
 /** Open the logs directory in the OS file manager */

@@ -3,7 +3,7 @@ import type { LLMMessage } from '@electron/services/intelligence/providers/BaseL
 /**
  * A single conversation session.
  *
- * Sessions are stored as `userData/memory/{personaId}/{sessionId}.json`.
+ * Sessions are stored as `userData/Memory/{personaId}/{sessionId}.json`.
  */
 export interface ConversationSession {
   id: string

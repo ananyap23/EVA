@@ -12,8 +12,8 @@ import type { FactService } from '@electron/services/memory/FactService'
 /**
  * PersonaService — CRUD for agent personas.
  *
- * Storage: `userData/personas.json` — a flat JSON array of AgentProfile[].
- * Each persona can optionally have prompt overrides in `userData/prompts/{personaId}/`.
+ * Storage: `userData/Personas` — a flat JSON array of AgentProfile[].
+ * Each persona can optionally have prompt overrides in `userData/Prompts/{personaId}/`.
  *
  * The default "Atlas" persona is always present and cannot be deleted.
  */
@@ -33,7 +33,7 @@ export class PersonaService extends BaseService {
   }
 
   async init(): Promise<void> {
-    this.filePath = path.join(app.getPath('userData'), 'personas.json')
+    this.filePath = path.join(app.getPath('userData'), 'Personas')
     this.loadFromDisk()
 
     // Ensure default persona always exists
@@ -192,14 +192,14 @@ export class PersonaService extends BaseService {
   }
 
   private ensurePersonaPromptsDir(id: string): void {
-    const dir = path.join(app.getPath('userData'), 'prompts', id)
+    const dir = path.join(app.getPath('userData'), 'Prompts', id)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
   }
 
   private removePersonaPromptsDir(id: string): void {
-    const dir = path.join(app.getPath('userData'), 'prompts', id)
+    const dir = path.join(app.getPath('userData'), 'Prompts', id)
     try {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true })

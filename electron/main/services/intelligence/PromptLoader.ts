@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * PromptLoader — loads .md prompt templates with {{variable}} substitution.
  *
  * Storage strategy (2-tier):
- * 1. Per-persona prompts: `userData/prompts/{personaId}/{name}.md`
+ * 1. Per-persona prompts: `userData/Prompts/{personaId}/{name}.md`
  * 2. Bundled defaults:    `intelligence/prompts/{name}.md`
  *
  * User edits are saved per-persona. `reset()` removes the override
@@ -24,7 +24,7 @@ export class PromptLoader {
 
   constructor() {
     this.bundledDir = path.join(__dirname, 'prompts')
-    this.userDir = path.join(app.getPath('userData'), 'prompts')
+    this.userDir = path.join(app.getPath('userData'), 'Prompts')
   }
 
   /** Resolve the per-persona prompts directory */
@@ -59,7 +59,7 @@ export class PromptLoader {
    * Load a prompt by name with optional variable substitution.
    *
    * Resolution order:
-   * 1. `userData/prompts/{personaId}/{name}.md` (per-persona override)
+   * 1. `userData/Prompts/{personaId}/{name}.md` (per-persona override)
    * 2. Bundled `prompts/{name}.md` (default)
    */
   load(name: string, vars?: Record<string, string>, personaId?: string): string {

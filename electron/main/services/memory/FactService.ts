@@ -17,7 +17,7 @@ export interface Fact {
 /**
  * FactService — per-persona long-term knowledge storage.
  *
- * Storage: `userData/facts/{personaId}.json` — flat JSON array of Fact[].
+ * Storage: `userData/Facts/{personaId}.json` — flat JSON array of Fact[].
  *
  * Facts are extracted from conversations by the LLM and can also be
  * added/edited/deleted manually by the user.
@@ -27,7 +27,7 @@ export class FactService extends BaseService {
   private factsCache = new Map<string, Fact[]>()
 
   async init(): Promise<void> {
-    this.baseDir = path.join(app.getPath('userData'), 'facts')
+    this.baseDir = path.join(app.getPath('userData'), 'Facts')
     if (!fs.existsSync(this.baseDir)) {
       fs.mkdirSync(this.baseDir, { recursive: true })
     }

@@ -47,7 +47,7 @@ const FLAT_TO_NESTED: Record<string, [string, string]> = {
  * Mutates `parsed` in place — moves flat keys into their nested groups
  * and deletes the original flat keys.
  *
- * @param parsed — raw JSON object from config.json
+ * @param parsed — raw JSON object from Config
  * @returns The same object with flat keys migrated
  */
 export function migrateFlat(parsed: Record<string, unknown>): Record<string, unknown> {

@@ -2,7 +2,7 @@
  * Config module — persistent app settings with load/save.
  *
  * Public API:
- * - `loadConfig()` — reads config.json from userData, merges with defaults
+ * - `loadConfig()` — reads Config from userData, merges with defaults
  * - `saveConfig(partial)` — merges partial updates, writes to disk
  * - `getConfig()` — returns current in-memory config (singleton)
  *
@@ -32,9 +32,9 @@ export { defaultConfig } from './defaults'
 
 let currentConfig: AppConfig = structuredClone(defaultConfig)
 
-/** Path to config.json in userData */
+/** Path to Config in userData */
 function getConfigPath(): string {
-  return path.join(app.getPath('userData'), 'config.json')
+  return path.join(app.getPath('userData'), 'Config')
 }
 
 /** Deep-merge source into target (two-level deep for nested groups) */

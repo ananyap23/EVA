@@ -11,7 +11,7 @@ const promptLoader = new PromptLoader()
 /**
  * settings.router — config & prompt management.
  *
- * Config: read / write AppConfig (persisted to config.json).
+ * Config: read / write AppConfig (persisted to Config).
  * Prompts: list / read / save / reset .md prompt templates.
  */
 

@@ -12,7 +12,7 @@ import { getConfig } from '@electron/utils/config'
 /**
  * MemoryService — per-persona conversation persistence.
  *
- * Storage layout: `userData/memory/{personaId}/{sessionId}.json`
+ * Storage layout: `userData/Memory/{personaId}/{sessionId}.json`
  *
  * Each persona has its own directory of session files.
  * The "active" session per persona is tracked in-memory.
@@ -28,7 +28,7 @@ export class MemoryService extends BaseService {
   private maxContext = getConfig().agent.maxContextMessages
 
   async init(): Promise<void> {
-    this.baseDir = path.join(app.getPath('userData'), 'memory')
+    this.baseDir = path.join(app.getPath('userData'), 'Memory')
     if (!fs.existsSync(this.baseDir)) {
       fs.mkdirSync(this.baseDir, { recursive: true })
     }
