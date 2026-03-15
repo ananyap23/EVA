@@ -41,6 +41,11 @@ export interface TTSConfig {
   enabled: boolean
 }
 
+export interface STTConfig {
+  enabled: boolean
+  language: string
+}
+
 export interface AgentConfig {
   maxIterations: number
   maxConsecutiveFailures: number
@@ -57,6 +62,7 @@ export interface AppConfig {
   llm: LLMConfig
   generation: GenerationConfig
   tts: TTSConfig
+  stt: STTConfig
   agent: AgentConfig
   hotkey: string
   activePersonaId: string
@@ -92,6 +98,10 @@ export function useSettings() {
       voiceId: '',
       model: '',
       enabled: true,
+    },
+    stt: {
+      enabled: false,
+      language: 'en',
     },
     agent: {
       maxIterations: 15,

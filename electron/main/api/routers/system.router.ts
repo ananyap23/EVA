@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { getAccentHsl } from '@electron/utils/color'
-import { toggleWindow, setSettingsOpen } from '@electron/WindowManager'
+import { toggleWindow, showWindow, setSettingsOpen } from '@electron/WindowManager'
 
 /**
  * system.router — queries & subscriptions for system-level info.
@@ -47,7 +47,7 @@ export const systemRouter = trpcRouter({
   /** Subscribe to agent visibility toggled from tray */
   onAgentVisibility: publicProcedure.subscription(() => {
     return observable<boolean>((emit) => {
-      emit.next(true)
+      emit.next(false)
 
       const handler = (visible: boolean) => emit.next(visible)
       mainEventBus.on('agent-visibility', handler)
@@ -96,5 +96,10 @@ export const systemRouter = trpcRouter({
   /** Hide the Atlas window (triggered by Escape from renderer) */
   hideWindow: publicProcedure.mutation(() => {
     toggleWindow()
+  }),
+
+  /** Show the Atlas window (triggered by STT wake word) */
+  showWindow: publicProcedure.mutation(() => {
+    showWindow()
   }),
 })

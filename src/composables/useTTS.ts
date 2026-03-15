@@ -231,8 +231,28 @@ function initSubscriptions() {
 
 /** Stop frontend audio playback immediately (call from outside useTTS, e.g. useResponse) */
 export function stopPlayback() {
+  // Clear pending chunks so nothing new gets appended
+  pendingChunks = []
+  blobChunks = []
+
+  // Tear down MSE pipeline
+  if (sourceBuffer && mediaSource && mediaSource.readyState === 'open') {
+    try {
+      sourceBuffer.abort()
+      mediaSource.removeSourceBuffer(sourceBuffer)
+    } catch {
+      // ignore — may already be removed
+    }
+  }
+  sourceBuffer = null
+  sourceBufferReady = false
+  mediaSource = null
+
+  // Stop and reset audio element
   if (audioElement) {
     audioElement.pause()
+    audioElement.removeAttribute('src')
+    audioElement.load()
   }
 }
 

@@ -59,6 +59,11 @@ const agentSchema = z.object({
   screenshotQuality: z.number().int().min(1).max(100).optional(),
 }).optional()
 
+const sttSchema = z.object({
+  enabled: z.boolean().optional(),
+  language: z.string().optional(),
+}).optional()
+
 export const settingsRouter = trpcRouter({
   /** Get full current config */
   getConfig: publicProcedure.query((): AppConfig => {
@@ -72,6 +77,7 @@ export const settingsRouter = trpcRouter({
       llm: llmSchema,
       generation: generationSchema,
       tts: ttsSchema,
+      stt: sttSchema,
       agent: agentSchema,
       hotkey: z.string().optional(),
       activePersonaId: z.string().optional(),

@@ -538,6 +538,7 @@ export async function runComputerUseLoop(
     mainEventBus.emit('agent:warning', {
       id: randomUUID(),
       message: `Maximum action steps reached (${maxIterations}). The task may be incomplete.`,
+      dismissable: true,
     })
   }
 
@@ -546,6 +547,7 @@ export async function runComputerUseLoop(
     mainEventBus.emit('agent:warning', {
       id: randomUUID(),
       message: `Too many consecutive failures (${maxConsecutiveFailures}). The task may be incomplete.`,
+      dismissable: true,
     })
   }
 

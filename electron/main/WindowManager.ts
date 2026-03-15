@@ -23,7 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const log = createLogger('WindowManager')
 
 let win: BrowserWindow | null = null
-let isAgentVisible = true
+let isAgentVisible = false
 let settingsOpen = false
 
 // ── Multi-Monitor Positioning ──
@@ -93,20 +93,23 @@ export async function createWindow(): Promise<BrowserWindow> {
 
   // When settings is requested from tray, ensure window is visible first
   mainEventBus.on('system:open-settings', () => {
-    showWindow()
+    showWindowForSettings()
   })
 
   // Always-on-top with 'screen-saver' level — the highest z-order on Windows.
   // Hardcoded: required for overlay to function correctly with click-through.
   win.setAlwaysOnTop(true, 'screen-saver')
 
-  log.info('Window created')
+  // Start hidden — user reveals via tray icon or wake word
+  win.setOpacity(0)
+
+  log.info('Window created (hidden)')
   return win
 }
 
-// ── Show Window (ensure visible) ──
+// ── Show Window ──
 
-/** Make the window visible, reposition to active monitor, disable click-through. */
+/** Make the window visible, reposition to active monitor (keeps click-through). */
 export function showWindow(): void {
   if (!win) return
 
@@ -114,13 +117,21 @@ export function showWindow(): void {
     const { x, y, width, height } = getActiveDisplayBounds()
     win.setBounds({ x, y, width, height })
     win.setOpacity(1)
+    win.setIgnoreMouseEvents(true, { forward: true })
     win.focus()
     isAgentVisible = true
+    mainEventBus.emit('agent-visibility', true)
+    log.info('Agent shown')
   }
+}
 
-  // Disable click-through so the settings overlay can receive clicks
-  win.setIgnoreMouseEvents(false)
-  log.info('Window shown for settings')
+/** Show window AND disable click-through (for settings overlay). */
+export function showWindowForSettings(): void {
+  showWindow()
+  if (win) {
+    win.setIgnoreMouseEvents(false)
+    log.info('Window shown for settings')
+  }
 }
 
 // ── Visibility Toggle ──
@@ -202,6 +213,14 @@ export function clearWindow(): void {
 export function setSettingsOpen(open: boolean): void {
   settingsOpen = open
   log.info(`Settings overlay ${open ? 'opened' : 'closed'}`)
+}
+
+/** Get the Electron Display that the Atlas window currently occupies. */
+export function getWindowDisplay() {
+  if (win) {
+    return screen.getDisplayMatching(win.getBounds())
+  }
+  return screen.getPrimaryDisplay()
 }
 
 // ── Multi-Monitor Display Targeting ──

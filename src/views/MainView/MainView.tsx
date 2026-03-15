@@ -9,6 +9,7 @@ import MicrotaskIsland from '@/components/islands/MicrotaskIsland'
 import ResponseIsland from '@/components/islands/ResponseIsland'
 import SearchIsland from '@/components/islands/SearchIsland'
 import InputBar from '@/components/input/InputBar'
+import ListeningIsland from '@/components/islands/ListeningIsland'
 import { useAgent } from '@/composables/useAgent'
 import { usePermissions } from '@/composables/usePermissions'
 import { useWarnings } from '@/composables/useWarnings'
@@ -18,6 +19,7 @@ import { useSearch } from '@/composables/useSearch'
 import { useAccentColor } from '@/composables/useAccentColor'
 import { useSounds } from '@/composables/useSounds'
 import { useTTS } from '@/composables/useTTS'
+import { useSTT } from '@/composables/useSTT'
 import { api } from '@/api'
 
 /**
@@ -76,6 +78,16 @@ export default defineComponent({
     /* ── TTS Audio Playback (MSE streaming) ── */
     useTTS()
 
+    /* ── STT (always-on voice input) ── */
+    const { isActivated, transcript: sttTranscript, chunks: sttChunks, enable: enableSTT } = useSTT()
+    const sttEnabled = ref(false)
+
+    // Auto-enable STT if configured
+    api.settings.getConfig.query().then((cfg) => {
+      sttEnabled.value = cfg.stt.enabled
+      if (cfg.stt.enabled) enableSTT()
+    })
+
     /* ── Agent Visibility (toggled from tray or Ctrl+Space) ── */
     const agentVisible = ref(true)
     let isFirstVisibilityEvent = true
@@ -91,8 +103,11 @@ export default defineComponent({
         agentVisible.value = visible
         if (visible) {
           sfx.activate()
-          inputDismissing.value = false
-          showInput.value = true
+          // Only auto-show InputBar if STT is OFF
+          if (!sttEnabled.value) {
+            inputDismissing.value = false
+            showInput.value = true
+          }
         } else {
           sfx.deactivate()
           // If agent is idle, clear the response and task queue
@@ -180,8 +195,8 @@ export default defineComponent({
           sfx.processing()
         } else if (data.state === 'idle' && (prevState === 'processing' || prevState === 'acting')) {
           sfx.responseReady()
-          // Auto-show InputBar for follow-up questions
-          if (agentVisible.value) {
+          // Auto-show InputBar for follow-up — only if STT is OFF
+          if (agentVisible.value && !sttEnabled.value) {
             setTimeout(() => {
               inputDismissing.value = false
               showInput.value = true
@@ -232,6 +247,9 @@ export default defineComponent({
       positionSide,
       openFile,
       revealFile,
+      isActivated,
+      sttTranscript,
+      sttChunks,
     }
   },
 
@@ -318,6 +336,14 @@ export default defineComponent({
               progressLabel={this.progressLabel}
               onDismiss={() => this.setTasks([])}
             />
+
+            {/* Listening — live voice transcript */}
+            {this.isActivated && (
+              <ListeningIsland
+                chunks={this.sttChunks}
+                transcript={this.sttTranscript}
+              />
+            )}
           </div>
 
           {/* Orb — reflects agent state; click toggles InputBar */}

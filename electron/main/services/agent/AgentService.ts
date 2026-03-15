@@ -136,12 +136,28 @@ export class AgentService extends BaseService {
     this.log.info('AgentService disposed')
   }
 
+  // ── Command dedupe guard ──
+  private lastCommandText = ''
+  private lastCommandTime = 0
+  private static readonly COMMAND_DEDUPE_MS = 2000
+
   /**
    * Handle an incoming user command.
    * If the agent is busy, the command is queued as a microtask.
+   * Drops identical commands within 2s to prevent accidental double-sends.
    */
   private async onCommand(payload: { text: string }): Promise<void> {
     const { text } = payload
+
+    // Dedupe: ignore identical command within 2s
+    const now = Date.now()
+    if (text === this.lastCommandText && now - this.lastCommandTime < AgentService.COMMAND_DEDUPE_MS) {
+      this.log.warn(`Duplicate command dropped: "${text}"`)
+      return
+    }
+    this.lastCommandText = text
+    this.lastCommandTime = now
+
     this.log.info(`Command: "${text}"`)
 
     if (this.busy) {

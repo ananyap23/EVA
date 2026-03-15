@@ -4,11 +4,12 @@ import { useSettings, type AppConfig } from '@/composables/useSettings'
 import GeneralTab from './tabs/GeneralTab'
 import LLMTab from './tabs/LLMTab'
 import TTSTab from './tabs/TTSTab'
+import STTTab from './tabs/STTTab'
 import HotkeyTab from './tabs/HotkeyTab'
 import AgentTab from './tabs/AgentTab'
 import PersonasTab from './tabs/PersonasTab'
 
-type TabId = 'general' | 'llm' | 'tts' | 'hotkey' | 'agent' | 'personas'
+type TabId = 'general' | 'llm' | 'tts' | 'stt' | 'hotkey' | 'agent' | 'personas'
 
 interface TabDef {
   id: TabId
@@ -20,6 +21,7 @@ const TABS: TabDef[] = [
   { id: 'general', label: 'General', icon: 'tune' },
   { id: 'llm', label: 'LLM', icon: 'psychology' },
   { id: 'tts', label: 'TTS', icon: 'record_voice_over' },
+  { id: 'stt', label: 'STT', icon: 'mic' },
   { id: 'agent', label: 'Agent', icon: 'smart_toy' },
   { id: 'hotkey', label: 'Hotkey', icon: 'keyboard' },
   { id: 'personas', label: 'Personas', icon: 'group' },
@@ -121,6 +123,9 @@ export default defineComponent({
                   )}
                   {this.activeTab === 'tts' && (
                     <TTSTab config={this.config} onUpdate={this.onUpdate} />
+                  )}
+                  {this.activeTab === 'stt' && (
+                    <STTTab config={this.config} onUpdate={this.onUpdate} />
                   )}
                   {this.activeTab === 'hotkey' && (
                     <HotkeyTab config={this.config} onUpdate={this.onUpdate} />

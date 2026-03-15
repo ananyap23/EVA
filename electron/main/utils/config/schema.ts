@@ -93,6 +93,13 @@ export interface AgentConfig {
   streamChunkDelay: number
 }
 
+export interface STTConfig {
+  /** Whether STT is enabled */
+  enabled: boolean
+  /** Language code for model selection (e.g. 'en', 'ru') */
+  language: string
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Root config
 // ═══════════════════════════════════════════════════════════════
@@ -102,6 +109,7 @@ export interface AppConfig {
   llm: LLMConfig
   generation: GenerationConfig
   tts: TTSConfig
+  stt: STTConfig
   agent: AgentConfig
   /** Global hotkey combo string */
   hotkey: string

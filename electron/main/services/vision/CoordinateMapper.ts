@@ -1,5 +1,6 @@
 import { screen } from 'electron'
 import { createLogger } from '@electron/utils/logger'
+import { getWindowDisplay } from '@electron/WindowManager'
 
 const log = createLogger('CoordinateMapper')
 
@@ -17,12 +18,12 @@ export interface ScreenInfo {
  */
 export class CoordinateMapper {
   /**
-   * Get primary display info.
+   * Get display info for the monitor the Atlas window is on.
    */
   getScreenInfo(): ScreenInfo {
-    const primary = screen.getPrimaryDisplay()
-    const { width, height } = primary.size
-    const scaleFactor = primary.scaleFactor
+    const display = getWindowDisplay()
+    const { width, height } = display.size
+    const scaleFactor = display.scaleFactor
 
     log.debug(`Screen: ${width}x${height} @ ${scaleFactor}x`)
     return { width, height, scaleFactor }

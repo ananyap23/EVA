@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron'
+import * as path from 'node:path'
+import { app, BrowserWindow, protocol, net } from 'electron'
 import { ServiceRegistry } from './services/ServiceRegistry'
 import { IntelligenceService } from './services/intelligence/IntelligenceService'
 import { TTSService } from './services/tts/TTSService'
@@ -10,10 +11,12 @@ import { FactService } from './services/memory/FactService'
 import { VisionService } from './services/vision/VisionService'
 import { MotorService } from './services/motor/MotorService'
 import { SearchService } from './services/search/SearchService'
+import { STTService } from './services/stt/STTService'
 import { setPersonaService } from './api/routers/personas.router'
 import { setMemoryService } from './api/routers/memory.router'
 import { setFactService } from './api/routers/facts.router'
 import { setAgentService } from './api/routers/agent.router'
+import { setSTTService } from './api/routers/audio.router'
 import { createLogger } from './utils/logger'
 import { loadConfig } from './utils/config'
 import { mainEventBus } from './utils/eventBus'
@@ -34,6 +37,11 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0)
 }
 
+// Register custom protocol for serving STT model files to renderer
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'stt-model', privileges: { bypassCSP: true, supportFetchAPI: true } },
+])
+
 // ── Service Registry ──
 
 const services = new ServiceRegistry()
@@ -45,6 +53,15 @@ app.whenReady().then(async () => {
 
   loadConfig()
 
+  // Serve STT model files to renderer via custom protocol (file:// is blocked)
+  // URL format: stt-model://ru/am/final.mdl → {userData}/Models/stt/ru/am/final.mdl
+  const sttModelsDir = path.join(app.getPath('userData'), 'Models', 'stt')
+  protocol.handle('stt-model', (req) => {
+    const relative = decodeURIComponent(req.url.slice('stt-model://'.length))
+    const filePath = path.join(sttModelsDir, relative)
+    return net.fetch(`file:///${filePath.replace(/\\/g, '/')}`)
+  })
+
   // Register services (order matters: dependencies first)
   const intelligence = new IntelligenceService()
   const persona = new PersonaService()
@@ -54,6 +71,7 @@ app.whenReady().then(async () => {
   const vision = new VisionService(intelligence)
   const motor = new MotorService()
   const searchService = new SearchService()
+  const stt = new STTService()
 
   // Wire cross-service dependencies
   persona.setMemoryService(memory)
@@ -68,6 +86,7 @@ app.whenReady().then(async () => {
   services.register('vision', vision)
   services.register('motor', motor)
   services.register('search', searchService)
+  services.register('stt', stt)
   const agent = new AgentService(intelligence, persona, memory, facts, vision, motor, searchService)
   services.register('agent', agent)
   services.register('hotkey', new HotkeyService())
@@ -77,6 +96,7 @@ app.whenReady().then(async () => {
   setMemoryService(memory)
   setFactService(facts)
   setAgentService(agent)
+  setSTTService(stt)
 
   await services.initAll()
   await createWindow()

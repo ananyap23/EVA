@@ -87,12 +87,14 @@ export interface MainEvents {
   /** Global hotkey: toggle Atlas visibility + InputBar */
   'hotkey:toggle-atlas': []
 
-  // ── Audio Events (Phase 5 placeholder) ──
+  // ── Audio / STT Events ──
 
   /** Transcript chunk from STT */
   'audio:transcript': [payload: { text: string; isFinal: boolean }]
   /** Listening state change */
   'audio:listening': [listening: boolean]
+  /** STT model download/status updates */
+  'stt:model-status': [payload: { downloaded: boolean; progress?: number; error?: string }]
 
   // ── Persona Events ──
 
@@ -105,6 +107,8 @@ export interface MainEvents {
 
   /** TTS speaking status changed */
   'tts:status': [payload: { speaking: boolean }]
+  /** TTS audio format for current provider */
+  'tts:format': [payload: { format: 'mpeg' | 'opus' }]
   /** TTS audio chunk (streaming) */
   'tts:audio': [payload: { chunk: Buffer; done: boolean }]
   /** Request TTS to speak text */

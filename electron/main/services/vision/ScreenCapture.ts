@@ -2,6 +2,7 @@ import screenshot from 'screenshot-desktop'
 import { nativeImage } from 'electron'
 import { createLogger } from '@electron/utils/logger'
 import { getConfig } from '@electron/utils/config'
+import { getWindowDisplay } from '@electron/WindowManager'
 
 const log = createLogger('ScreenCapture')
 
@@ -23,20 +24,56 @@ export interface Rect {
  */
 export class ScreenCapture {
   /**
-   * Capture the full primary display, optimized for LLM.
+   * Capture the display the Atlas window is on, optimized for LLM.
    *
    * @param format — 'jpeg' (default, smaller) or 'png' (required by Computer Use API)
    * @returns Resized buffer in the requested format.
    */
   async captureFullScreen(format: 'jpeg' | 'png' = 'jpeg'): Promise<Buffer> {
     log.debug('Capturing full screen...')
-    const img = await screenshot({ format: 'png' })
+
+    // Determine which screenshot-desktop display matches the Atlas window
+    const screenId = await this.resolveDisplayId()
+
+    let img: Buffer | string
+    if (screenId) {
+      log.debug(`Targeting display: ${screenId}`)
+      img = await screenshot({ format: 'png', screen: screenId })
+    } else {
+      img = await screenshot({ format: 'png' })
+    }
+
     const raw = Buffer.isBuffer(img) ? img : Buffer.from(img)
     log.debug(`Raw screenshot: ${raw.length} bytes`)
 
     const optimized = format === 'png' ? this.optimizePng(raw) : this.optimize(raw)
     log.info(`Screenshot captured: ${raw.length} → ${optimized.length} bytes (${Math.round(optimized.length / 1024)}KB)`)
     return optimized
+  }
+
+  /**
+   * Match the Atlas window's display to a screenshot-desktop display ID.
+   * Returns the display ID string (e.g. `\\.\DISPLAY2`) or undefined to use default.
+   */
+  private async resolveDisplayId(): Promise<string | undefined> {
+    try {
+      const windowDisplay = getWindowDisplay()
+      const displays: any[] = await screenshot.listDisplays()
+
+      if (!displays || displays.length <= 1) return undefined
+
+      // Match by bounds: screenshot-desktop provides left/top for each display
+      const matched = displays.find(
+        (d) => d.left === windowDisplay.bounds.x && d.top === windowDisplay.bounds.y,
+      )
+
+      if (matched) return String(matched.id)
+
+      log.warn('Could not match window display to screenshot display, using default')
+      return undefined
+    } catch {
+      return undefined
+    }
   }
 
   /**

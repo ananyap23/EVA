@@ -3,29 +3,33 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { createLogger } from '@electron/utils/logger'
+import type { STTService } from '@electron/services/stt/STTService'
 
 const log = createLogger('audio.router')
 
+let sttService: STTService | null = null
+
+/** Wire STTService into the router (called from index.ts) */
+export function setSTTService(stt: STTService): void {
+  sttService = stt
+}
+
 /**
- * audio.router — audio/voice + TTS endpoints.
- *
- * STT stubs (Phase 7) + TTS controls (Phase 3.5).
+ * audio.router — audio/voice + TTS + STT endpoints.
  */
 export const audioRouter = trpcRouter({
 
-  // ── STT (Phase 7 stubs) ──
+  // ── STT ──
 
   /** Start listening for voice input */
   startListening: publicProcedure.mutation(() => {
-    log.info('startListening called (stub)')
-    mainEventBus.emit('audio:listening', true)
+    sttService?.setListening(true)
     return { ok: true }
   }),
 
   /** Stop listening for voice input */
   stopListening: publicProcedure.mutation(() => {
-    log.info('stopListening called (stub)')
-    mainEventBus.emit('audio:listening', false)
+    sttService?.setListening(false)
     return { ok: true }
   }),
 
@@ -40,6 +44,48 @@ export const audioRouter = trpcRouter({
 
       return () => {
         mainEventBus.off('audio:transcript', onTranscript)
+      }
+    })
+  }),
+
+  /** Get STT model status (downloaded, path) */
+  getSTTModelStatus: publicProcedure.query(() => {
+    if (!sttService) return { downloaded: false, path: '' }
+    return sttService.getModelStatus()
+  }),
+
+  /** Get model path for renderer to load */
+  getSTTModelPath: publicProcedure.query(() => {
+    if (!sttService) return ''
+    return sttService.getModelPath()
+  }),
+
+  /** Get available STT languages */
+  getSTTLanguages: publicProcedure.query(() => {
+    if (!sttService) return []
+    return sttService.getAvailableLanguages()
+  }),
+
+  /** Download STT model for a language */
+  downloadSTTModel: publicProcedure
+    .input(z.object({ language: z.string() }))
+    .mutation(async ({ input }) => {
+      if (!sttService) throw new Error('STTService not available')
+      await sttService.downloadModel(input.language)
+      return { ok: true }
+    }),
+
+  /** Subscribe to STT model download progress */
+  onSTTModelStatus: publicProcedure.subscription(() => {
+    return observable<{ downloaded: boolean; progress?: number; error?: string }>((emit) => {
+      function onStatus(payload: { downloaded: boolean; progress?: number; error?: string }) {
+        emit.next(payload)
+      }
+
+      mainEventBus.on('stt:model-status', onStatus)
+
+      return () => {
+        mainEventBus.off('stt:model-status', onStatus)
       }
     })
   }),

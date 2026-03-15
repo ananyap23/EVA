@@ -1,0 +1,76 @@
+/* ── ListeningIsland ── */
+
+.island--listening {
+  animation: response-enter 500ms var(--spring-smooth) backwards;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 30vh;
+  border-color: hsl(0 70% 50% / 0.2);
+}
+
+/* ── Header ── */
+
+.island__header--listening .island__title {
+  color: hsl(0 70% 65%);
+}
+
+.listening__mic-icon {
+  color: hsl(0 70% 65%) !important;
+  animation: mic-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes mic-glow {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* ── Scroll area ── */
+
+.listening__scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.listening__scroll::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* ── Text ── */
+
+.listening__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── Blinking cursor ── */
+
+.listening__cursor {
+  animation: cursor-blink 1s step-end infinite;
+  color: rgba(255 255 255 / 0.4);
+  font-weight: 300;
+}
+
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ── Streaming pulse border ── */
+
+.island--listening {
+  animation:
+    response-enter 500ms var(--spring-smooth) backwards,
+    listening-pulse 2s ease-in-out infinite 500ms;
+}
+
+@keyframes listening-pulse {
+  0%, 100% { border-color: hsl(0 70% 50% / 0.15); }
+  50% { border-color: hsl(0 70% 50% / 0.35); }
+}

@@ -38,6 +38,10 @@ export const defaultConfig: AppConfig = {
     model: 'eleven_flash_v2_5',
     enabled: true,
   },
+  stt: {
+    enabled: false,
+    language: 'en',
+  },
   agent: {
     maxIterations: 15,
     maxConsecutiveFailures: 3,

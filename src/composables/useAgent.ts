@@ -48,6 +48,7 @@ initSubscriptions()
 export function useAgent() {
   /**
    * Send a text command to the agent via tRPC mutation.
+   * Deduplicate guard is handled server-side by AgentService.
    */
   function sendCommand(text: string) {
     console.info('[useAgent] sendCommand:', text)

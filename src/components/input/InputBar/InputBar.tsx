@@ -3,11 +3,10 @@ import GlassInput from '@/components/core/GlassInput'
 import './InputBar.css'
 
 /**
- * InputBar — text command input, shown on demand.
+ * InputBar — text command input (fallback when user can't speak).
  *
- * - No voice mode (orb handles listening state)
- * - Emits 'submit' when user presses Enter
- * - Emits 'close' when user presses Escape or submits
+ * - Type + Enter to submit
+ * - Emits 'submit' on Enter, 'close' on Escape or submit
  */
 export default defineComponent({
   name: 'InputBar',
@@ -42,8 +41,6 @@ export default defineComponent({
 
     function focusInput() {
       nextTick(() => {
-        // inputRef is the GlassInput component instance
-        // Access the underlying <input> via $el
         const el = inputRef.value as any
         if (el?.$el) {
           el.$el.focus()
@@ -53,7 +50,6 @@ export default defineComponent({
       })
     }
 
-    // Auto-focus when mounted
     onMounted(focusInput)
 
     return { inputText, inputRef, onSubmit, onKeydown, focusInput }
