@@ -1,3 +1,21 @@
+# Changelog — v0.2.2 (2026-03-15)
+
+## [Added]
+
+- **File-based log transport** — all log output (`info`, `warn`, `error`, `debug`) is now persisted to `{userData}/Log` with automatic size rotation (5 MB cap, keeps last ~1 MB)
+- **Session banners** — `logSessionStart()` / `logSessionEnd()` write visual delimiters (`SESSION START` / `SESSION END`) to the log file for easier request tracing
+- **"Open Log File" button** in `GeneralTab` — opens the log file in the default text editor via `settings.openLogFile` RPC
+- **Settings-open guard on tray icon** — `WindowManager` tracks settings-open state via `notifySettingsOpen` RPC; tray click no longer collapses the atlas window while settings are visible
+
+## [Changed]
+
+- **`userData` folder naming** — capitalized to match Chromium conventions (`logs` → `Logs`) across `sessionLogger.ts`, `config/index.ts`, `config/schema.ts`, `config/migration.ts`, `PromptLoader.ts`, `FactService.ts`, `MemoryService.ts`, `MemoryTypes.ts`, `PersonaService.ts`
+- **`createLogger`** — refactored to separate prefix formatting from output, enabling dual console + file writes
+- **`GeneralTab`** — log buttons now share a horizontal row layout
+- **`App.tsx`** — emits `notifySettingsOpen` on settings open/close
+
+---
+
 # Changelog — v0.2.1 (2026-03-15)
 
 ## [Added]
