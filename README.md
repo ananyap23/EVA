@@ -152,6 +152,12 @@ yarn dev
 
 ---
 
+## ⭐ Support the Project
+
+If you find Atlas useful, please consider giving the repository a **star** ⭐ — it helps others discover the project and motivates further development!
+
+[![Star on GitHub](https://img.shields.io/github/stars/dortanes/atlas?style=social)](https://github.com/dortanes/atlas)
+
 ## 🤝 Contributing
 
 Contributions are welcome! Feel free to open an issue or submit a pull request.
