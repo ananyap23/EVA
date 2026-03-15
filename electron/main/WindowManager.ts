@@ -24,6 +24,7 @@ const log = createLogger('WindowManager')
 
 let win: BrowserWindow | null = null
 let isAgentVisible = true
+let settingsOpen = false
 
 // ── Multi-Monitor Positioning ──
 
@@ -127,6 +128,12 @@ export function showWindow(): void {
 export function toggleWindow(): void {
   if (!win) return
 
+  // Don't allow hiding while the settings overlay is open
+  if (isAgentVisible && settingsOpen) {
+    log.info('Toggle ignored — settings overlay is open')
+    return
+  }
+
   if (isAgentVisible) {
     // Notify renderer so it can animate out
     mainEventBus.emit('agent-visibility', false)
@@ -190,6 +197,11 @@ export function getWindow(): BrowserWindow | null {
 
 export function clearWindow(): void {
   win = null
+}
+
+export function setSettingsOpen(open: boolean): void {
+  settingsOpen = open
+  log.info(`Settings overlay ${open ? 'opened' : 'closed'}`)
 }
 
 // ── Multi-Monitor Display Targeting ──

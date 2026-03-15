@@ -135,4 +135,11 @@ export const settingsRouter = trpcRouter({
     await openLogsFolder()
     return true
   }),
+
+  /** Open full log file in OS default application */
+  openLogFile: publicProcedure.mutation(async () => {
+    const { openLogFile } = await import('@electron/utils/logger')
+    await openLogFile()
+    return true
+  }),
 })

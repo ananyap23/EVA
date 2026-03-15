@@ -20,12 +20,14 @@ export default defineComponent({
       onData() {
         // Disable click-through so user can interact with settings
         api.system.setIgnoreMouseEvents.mutate({ ignore: false })
+        api.system.notifySettingsOpen.mutate({ open: true })
         view.value = 'settings'
       },
     })
 
     function closeSettings() {
       view.value = 'main'
+      api.system.notifySettingsOpen.mutate({ open: false })
       // Re-enable click-through for overlay mode
       api.system.setIgnoreMouseEvents.mutate({ ignore: true, forward: true })
     }

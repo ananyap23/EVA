@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { getAccentHsl } from '@electron/utils/color'
-import { toggleWindow } from '@electron/WindowManager'
+import { toggleWindow, setSettingsOpen } from '@electron/WindowManager'
 
 /**
  * system.router — queries & subscriptions for system-level info.
@@ -85,6 +85,13 @@ export const systemRouter = trpcRouter({
   closeSettings: publicProcedure.mutation(() => {
     mainEventBus.emit('system:close-settings')
   }),
+
+  /** Notify main process that settings overlay opened/closed */
+  notifySettingsOpen: publicProcedure
+    .input(z.object({ open: z.boolean() }))
+    .mutation(({ input }) => {
+      setSettingsOpen(input.open)
+    }),
 
   /** Hide the Atlas window (triggered by Escape from renderer) */
   hideWindow: publicProcedure.mutation(() => {

@@ -16,6 +16,7 @@ import { MicrotaskQueue } from './MicrotaskQueue'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { getConfig } from '@electron/utils/config'
 import { SessionLogger } from '@electron/utils/sessionLogger'
+import { logSessionStart, logSessionEnd } from '@electron/utils/logger'
 
 /**
  * AgentService — top-level orchestrator for the agent brain.
@@ -156,6 +157,7 @@ export class AgentService extends BaseService {
    * Execute a command: transition state → run loop → persist → check queue.
    */
   private async executeCommand(text: string): Promise<void> {
+    logSessionStart(text)
     this.busy = true
     // Clear previous action steps (reset MicrotaskIsland)
     this.actionSteps = []
@@ -191,6 +193,7 @@ export class AgentService extends BaseService {
     // Flush session log to disk
     sessionLogger?.flush()
 
+    logSessionEnd()
     this.busy = false
     await this.processQueue()
   }

@@ -72,9 +72,17 @@ export default defineComponent({
           />
         </label>
 
-        <div class="settings-field">
+        <div class="settings-field" style="display: flex; flex-direction: row; gap: 8px;">
           <button
             class="settings-field__button"
+            style="flex: 1;"
+            onClick={() => { api.settings.openLogFile.mutate() }}
+          >
+            📄 Open Log File
+          </button>
+          <button
+            class="settings-field__button"
+            style="flex: 1;"
             onClick={() => { api.settings.openSessionLogs.mutate() }}
           >
             📂 Open Logs Folder
