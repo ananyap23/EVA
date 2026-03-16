@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dortanes/atlas/releases"><img src="https://img.shields.io/badge/download-v0.2.1-7c3aed?style=for-the-badge&logo=windows&logoColor=white" alt="Download" /></a>&nbsp;
+  <a href="https://github.com/dortanes/atlas/releases"><img src="https://img.shields.io/badge/download-v0.2.3-7c3aed?style=for-the-badge&logo=windows&logoColor=white" alt="Download" /></a>&nbsp;
   <a href="#-getting-started"><img src="https://img.shields.io/badge/get%20started-→-0ea5e9?style=for-the-badge" alt="Get Started" /></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-gray?style=for-the-badge" alt="License" /></a>
 </p>
@@ -25,7 +25,7 @@
 
 ---
 
-> **⚠️ Atlas is in active development (v0.2.1).**
+> **⚠️ Atlas is in active development (v0.2.3).**
 > 
 > - 🤖 **LLM support:** Gemini (including native [Computer Use API](https://ai.google.dev/gemini-api/docs/computer-use)) and OpenAI. More providers on the way.
 > - 🖥 **Screen control:** Gemini 3.x models use native [Computer Use API](https://ai.google.dev/gemini-api/docs/computer-use) for precise actions. Older models use vision-based coordinate prediction.
@@ -47,6 +47,7 @@ Think of it as a **copilot for your entire OS**.
 - 🔍 **Searches the web** — finds answers and brings them back, no tab-switching needed
 - 📂 **Finds your files** — searches local files and folders by name, right from chat
 - 🗣 **Speaks to you** — real-time voice responses with streaming TTS
+- 🎙 **Listens to you** — local speech-to-text with wake word activation, no cloud required
 - 🔊 **Sound feedback** — distinct sounds for every state: activation, processing, task complete, warnings
 - 🛡 **Asks before doing anything risky** — built-in safety system with permission prompts
 
@@ -64,6 +65,7 @@ Context-aware floating panels that appear when relevant:
 - **Permission Island** — asks for confirmation before risky operations
 - **Microtask Island** — your task queue with real-time step progress (queue new tasks while the agent is busy)
 - **Search Island** — web search results and local file search results
+- **Listening Island** — live transcript display during voice input
 - **Warning Island** — dismissable warnings for errors and quota issues
 
 ### 🎯 Agent Cursor
@@ -80,6 +82,9 @@ Create multiple AI agents with unique personalities, knowledge, and voices. Each
 
 ### 🧠 Memory
 Atlas remembers your preferences and context across sessions. It learns facts about you from conversations and uses them to give better responses over time. Browse conversation history and view, edit, or delete learned facts in Settings.
+
+### 🎙 Voice Input
+Local offline speech-to-text via Vosk — just say the wake word (the active persona's name) and Atlas starts listening. No cloud API required.
 
 ### ✍️ Editable Prompts
 Full control over the AI's behavior — modify system, action, and safety prompts directly from the Settings UI. Reset to defaults anytime.
@@ -99,8 +104,8 @@ Enable per-request session logs to trace the full pipeline: intent classificatio
 1. Go to [**Releases**](https://github.com/dortanes/atlas/releases) and download the latest installer for Windows
 2. Run the installer — Atlas will appear in your system tray
 3. Get a **Gemini API key**: go to [Google AI Studio](https://aistudio.google.com/apikey) → sign in → **Create API Key** → copy it
-4. Click the **Atlas tray icon** → **Settings** → **LLM** tab → paste your API key
-5. Set the recommended models in the **LLM** tab:
+4. Click the **Atlas tray icon** → **Settings** → **Intelligence** tab → paste your API key
+5. Set the recommended models in the **Intelligence** tab:
 
    | Setting | Free tier | Paid tier |
    |---------|-----------|-----------|
@@ -110,8 +115,8 @@ Enable per-request session logs to trace the full pipeline: intent classificatio
    > Vision model handles screen control & Computer Use. Paid tier model is more accurate but requires a billing-enabled API key.
 
 6. *(Optional)* For voice output:
-   - **Alice** (free, no API key): **TTS** tab → select **Alice** → done!
-   - **ElevenLabs** (premium voices): get an [ElevenLabs](https://elevenlabs.io/) API key → **TTS** tab → paste key + voice ID
+   - **Alice** (free, no API key): **Voice** tab → select **Alice** → done!
+   - **ElevenLabs** (premium voices): get an [ElevenLabs](https://elevenlabs.io/) API key → **Voice** tab → paste key + voice ID
 7. Press `Ctrl+Space` and start giving Atlas tasks 🎉
 
 ### Build from Source
@@ -145,7 +150,7 @@ yarn dev
 | ✅ | Settings UI with prompt editor + debug logging |
 | ✅ | Intent classification (direct / action / chat) |
 | ✅ | Context caching (Gemini prompt caching for token optimization) |
-| 🔜 | Voice input (wake word + STT) |
+| ✅ | Voice input (wake word + local STT via Vosk) |
 | 🔜 | Action whitelist/blacklist & audit log |
 | 🔜 | Onboarding flow |
 | 🔜 | Auto-update |
