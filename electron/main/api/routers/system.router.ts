@@ -7,6 +7,14 @@ import { mainEventBus } from '@electron/utils/eventBus'
 import { getAccentHsl } from '@electron/utils/color'
 import { toggleWindow, showWindow, forceHideWindow } from '@electron/WindowManager'
 
+import type { GPUService } from '@electron/services/gpu/GPUService'
+
+let gpuService: GPUService | null = null
+
+export function setGPUService(service: GPUService): void {
+  gpuService = service
+}
+
 /**
  * system.router — queries & subscriptions for system-level info.
  */
@@ -25,6 +33,21 @@ export const systemRouter = trpcRouter({
       nodeVersion: process.versions.node,
       electronVersion: process.versions.electron,
     }
+  }),
+
+  /** Get detected graphics hardware, VRAM, and AI acceleration status */
+  getGPUInfo: publicProcedure.query(async () => {
+    if (!gpuService) {
+      return {
+        gpus: [],
+        activeGPU: 'Integrated/Default Graphics',
+        isAccelerated: true,
+        vramTotalMB: 0,
+        recommendedLocalLLM: 'CPU Mode: 1B - 3B quantized models',
+        features: {},
+      }
+    }
+    return gpuService.getGPUReport()
   }),
 
   /** Get OS accent color as HSL (one-time) */
@@ -54,6 +77,17 @@ export const systemRouter = trpcRouter({
 
       return () => {
         mainEventBus.removeListener('agent-visibility', handler)
+      }
+    })
+  }),
+
+  /** Subscribe to global mic command hotkey events */
+  onToggleMicHotkey: publicProcedure.subscription(() => {
+    return observable<boolean>((emit) => {
+      const handler = () => emit.next(true)
+      mainEventBus.on('hotkey:toggle-mic', handler)
+      return () => {
+        mainEventBus.removeListener('hotkey:toggle-mic', handler)
       }
     })
   }),

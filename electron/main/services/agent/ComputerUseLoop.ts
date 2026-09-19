@@ -166,16 +166,26 @@ export async function runComputerUseLoop(
   let iteration = 0
   let consecutiveFailures = 0
   let fullResponse = ''
-
   // NOTE: Explicit caching is NOT used for Computer Use — Gemini API
   // forbids cachedContent + tools/tool_config in the same request.
 
-  // ── Main loop ──
-  while (iteration < maxIterations && consecutiveFailures < maxConsecutiveFailures) {
-    iteration++
-    const progress = Math.min(iteration * 15, 95)
+  let terminated = false
+  const onTerminate = () => { terminated = true }
+  mainEventBus.on('agent:terminate', onTerminate)
 
-    log.info(`Iteration ${iteration} (failures: ${consecutiveFailures}/${maxConsecutiveFailures})`)
+  // ── Main loop ──
+  try {
+    while (iteration < maxIterations && consecutiveFailures < maxConsecutiveFailures) {
+      if (terminated || stateMachine.state === 'idle') {
+        log.info('Computer Use loop terminated by user')
+        sessionLogger?.step('Computer Use loop terminated by user')
+        break
+      }
+
+      iteration++
+      const progress = Math.min(iteration * 15, 95)
+
+      log.info(`Iteration ${iteration} (failures: ${consecutiveFailures}/${maxConsecutiveFailures})`)
 
     try {
       // ── Call Gemini with computer_use tool ──
@@ -551,16 +561,20 @@ export async function runComputerUseLoop(
     })
   }
 
-  sessionLogger?.step(`Total iterations: ${iteration}`)
+  } finally {
+    mainEventBus.off('agent:terminate', onTerminate)
+  }
 
   // Stream final response to UI
-  if (fullResponse.trim()) {
+  if (fullResponse.trim() && stateMachine.state !== 'idle') {
     const stopStream = sessionLogger?.startTimer('Response streaming')
     await streamFinalResponse(fullResponse, persona.id, factExtractor)
     stopStream?.()
   }
 
-  stateMachine.transition('TASK_DONE')
+  if (stateMachine.state !== 'idle') {
+    stateMachine.transition('TASK_DONE')
+  }
 
   return [
     ...history,

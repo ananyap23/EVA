@@ -39,8 +39,8 @@ export default defineComponent({
       <div class="about-page">
         {/* Hero section — centered vertically */}
         <div class="about-page__hero">
-          <img class="about-page__logo" src={logoUrl} alt="Atlas" />
-          <div class="about-page__name">Atlas</div>
+          <img class="about-page__logo" src={logoUrl} alt="EVA-01" />
+          <div class="about-page__name">EVA-01</div>
           <div class="about-page__version">v{this.info?.version ?? '…'}</div>
           <div class="about-page__tagline">AI Desktop Agent</div>
 

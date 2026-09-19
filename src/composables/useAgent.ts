@@ -71,10 +71,22 @@ export function useAgent() {
     currentAction.value = action
   }
 
+  /**
+   * Terminate running process, action, shell, or agent loop immediately.
+   */
+  function terminateProcess() {
+    console.info('[useAgent] Terminate requested')
+    api.agent.terminateProcess.mutate().catch(() => {})
+    api.audio.stopSpeaking.mutate().catch(() => {})
+    state.value = 'idle'
+    currentAction.value = null
+  }
+
   return {
     state,
     currentAction,
     sendCommand,
+    terminateProcess,
     setState,
     setAction,
   }

@@ -23,9 +23,9 @@ export interface AgentProfile {
 
 /** The built-in default persona that ships with the app */
 export const DEFAULT_PERSONA: AgentProfile = {
-  id: 'atlas-default',
-  name: 'Atlas',
-  avatar: '🛸',
+  id: 'eva-01-default',
+  name: 'EVA-01',
+  avatar: '🤖',
   personality:
     'You are helpful, concise, and proactive.\n' +
     'You speak naturally, not in a robotic manner.\n' +

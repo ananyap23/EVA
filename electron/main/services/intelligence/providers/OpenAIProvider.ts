@@ -196,23 +196,37 @@ export class OpenAIProvider extends BaseLLMProvider {
   async chatStructured(messages: LLMMessage[], jsonSchema: Record<string, unknown>, config?: GenerationConfig, systemInstruction?: string, _cachedContent?: string): Promise<string> {
     log.debug(`chatStructured() with ${messages.length} message(s)`)
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: this.toMessages(messages, systemInstruction),
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'structured_output',
-          strict: true,
-          schema: jsonSchema,
-        },
-      } as OpenAI.Chat.ChatCompletionCreateParams['response_format'],
-      ...this.toOpenAIParams(config),
-    })
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: this.toMessages(messages, systemInstruction),
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'structured_output',
+            strict: true,
+            schema: jsonSchema,
+          },
+        } as OpenAI.Chat.ChatCompletionCreateParams['response_format'],
+        ...this.toOpenAIParams(config),
+      })
 
-    const text = response.choices[0]?.message?.content ?? ''
-    log.debug(`chatStructured() response length: ${text.length}`)
-    return text
+      const text = response.choices[0]?.message?.content ?? ''
+      log.debug(`chatStructured() response length: ${text.length}`)
+      return text
+    } catch (err: unknown) {
+      log.warn(`chatStructured() json_schema failed (${(err as Error)?.message || err}), falling back to json_object format`)
+      const fallbackInstruction = `${systemInstruction || ''}\n\nIMPORTANT: Output valid JSON only, strictly matching this schema: ${JSON.stringify(jsonSchema)}`
+      const fallback = await this.client.chat.completions.create({
+        model: this.model,
+        messages: this.toMessages(messages, fallbackInstruction),
+        response_format: { type: 'json_object' } as any,
+        ...this.toOpenAIParams(config),
+      })
+      const fallbackText = fallback.choices[0]?.message?.content ?? ''
+      log.debug(`chatStructured() fallback response length: ${fallbackText.length}`)
+      return fallbackText
+    }
   }
 
   /**
@@ -252,22 +266,41 @@ export class OpenAIProvider extends BaseLLMProvider {
       }
     })
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: [...sysMessages, ...converted],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'structured_output',
-          strict: true,
-          schema: jsonSchema,
-        },
-      } as OpenAI.Chat.ChatCompletionCreateParams['response_format'],
-      ...this.toOpenAIParams(config),
-    })
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [...sysMessages, ...converted],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'structured_output',
+            strict: true,
+            schema: jsonSchema,
+          },
+        } as OpenAI.Chat.ChatCompletionCreateParams['response_format'],
+        ...this.toOpenAIParams(config),
+      })
 
-    const text = response.choices[0]?.message?.content ?? ''
-    log.debug(`chatWithVisionStructured() response length: ${text.length}`)
-    return text
+      const text = response.choices[0]?.message?.content ?? ''
+      log.debug(`chatWithVisionStructured() response length: ${text.length}`)
+      return text
+    } catch (err: unknown) {
+      log.warn(`chatWithVisionStructured() json_schema failed (${(err as Error)?.message || err}), falling back to json_object format`)
+      const fallbackSys: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: `${systemInstruction || ''}\n\nIMPORTANT: Output valid JSON only, strictly matching this schema: ${JSON.stringify(jsonSchema)}`,
+        },
+      ]
+      const fallback = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [...fallbackSys, ...converted],
+        response_format: { type: 'json_object' } as any,
+        ...this.toOpenAIParams(config),
+      })
+      const fallbackText = fallback.choices[0]?.message?.content ?? ''
+      log.debug(`chatWithVisionStructured() fallback response length: ${fallbackText.length}`)
+      return fallbackText
+    }
   }
 }

@@ -1,9 +1,10 @@
+import { globalShortcut } from 'electron'
 import { BaseService } from '@electron/services/base/BaseService'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { getConfig, type AppConfig } from '@electron/utils/config'
 
 /**
- * HotkeyService — global keyboard shortcuts via uiohook-napi.
+ * HotkeyService — global keyboard shortcuts via Electron globalShortcut and uiohook-napi.
  *
  * Reads the hotkey combo from config (e.g. "Ctrl+Space").
  * Listens for `config:changed` to rebind at runtime.
@@ -14,6 +15,8 @@ export class HotkeyService extends BaseService {
 
   /** Parsed hotkey target */
   private hotkey = { ctrl: false, alt: false, shift: false, meta: false, keycode: 0 }
+  /** Parsed mic command hotkey target */
+  private micHotkey = { ctrl: false, alt: false, shift: false, meta: false, keycode: 0 }
 
   /** Live modifier state */
   private modifiers = { ctrl: false, alt: false, shift: false, meta: false }
@@ -23,30 +26,69 @@ export class HotkeyService extends BaseService {
   private configHandler: ((config: AppConfig) => void) | null = null
 
   async init(): Promise<void> {
+    const cfg = getConfig()
+
+    // 1. Register OS-level global shortcuts via Electron (works standalone & across all apps)
+    this.registerGlobalShortcuts(cfg.hotkey, cfg.stt?.micHotkey || 'Ctrl+Shift+Space')
+
+    // 2. Initialize low-level uiohook as complementary fallback
     try {
       const mod = await import('uiohook-napi')
       this.UiohookKey = mod.UiohookKey
       this.uiohook = mod.uIOhook
 
-      this.parseHotkey(getConfig().hotkey)
+      this.parseHotkey(cfg.hotkey)
+      this.parseMicHotkey(cfg.stt?.micHotkey || 'Ctrl+Shift+Space')
       this.bindListeners()
 
       this.uiohook.start()
-
-      // React to config changes at runtime
-      this.configHandler = (config: AppConfig) => {
-        this.parseHotkey(config.hotkey)
-        this.log.info(`Hotkey rebound to: ${config.hotkey}`)
-      }
-      mainEventBus.on('config:changed', this.configHandler)
-
-      this.log.info(`HotkeyService started (${getConfig().hotkey} → toggle Atlas)`)
+      this.log.info(`uiohook started (window: ${cfg.hotkey}, mic: ${cfg.stt?.micHotkey || 'Ctrl+Shift+Space'})`)
     } catch (err) {
-      this.log.error('Failed to initialize uiohook-napi:', err)
+      this.log.warn('uiohook-napi unavailable, relying on Electron globalShortcut:', err)
+    }
+
+    // React to config changes at runtime
+    this.configHandler = (config: AppConfig) => {
+      this.registerGlobalShortcuts(config.hotkey, config.stt?.micHotkey || 'Ctrl+Shift+Space')
+      this.parseHotkey(config.hotkey)
+      this.parseMicHotkey(config.stt?.micHotkey || 'Ctrl+Shift+Space')
+      this.log.info(`Hotkeys rebound: window=${config.hotkey}, mic=${config.stt?.micHotkey}`)
+    }
+    mainEventBus.on('config:changed', this.configHandler)
+  }
+
+  /** Register OS-level shortcuts through Electron's native RegisterHotKey */
+  private registerGlobalShortcuts(windowHotkey: string, micHotkey: string): void {
+    try {
+      globalShortcut.unregisterAll()
+
+      const windowAccel = (windowHotkey || 'Ctrl+Space').replace(/\bCtrl\b/i, 'CommandOrControl')
+      const ok1 = globalShortcut.register(windowAccel, () => {
+        this.log.info(`globalShortcut: ${windowAccel} triggered → toggle EVA-01`)
+        mainEventBus.emit('hotkey:toggle-eva-01')
+        mainEventBus.emit('hotkey:toggle-atlas')
+      })
+      this.log.info(`Registered OS global shortcut: ${windowAccel} (success: ${ok1})`)
+
+      if (micHotkey) {
+        const micAccel = micHotkey.replace(/\bCtrl\b/i, 'CommandOrControl')
+        const ok2 = globalShortcut.register(micAccel, () => {
+          this.log.info(`globalShortcut: ${micAccel} triggered → toggle mic`)
+          mainEventBus.emit('hotkey:toggle-mic')
+        })
+        this.log.info(`Registered OS global shortcut: ${micAccel} (success: ${ok2})`)
+      }
+    } catch (err) {
+      this.log.error('Failed to register globalShortcut:', err)
     }
   }
 
   async dispose(): Promise<void> {
+    try {
+      globalShortcut.unregisterAll()
+    } catch {
+      // ignore
+    }
     if (this.configHandler) {
       mainEventBus.removeListener('config:changed', this.configHandler)
     }
@@ -69,6 +111,20 @@ export class HotkeyService extends BaseService {
     // The last non-modifier part is the key
     const key = parts.filter((p) => !['Ctrl', 'Alt', 'Shift', 'Meta'].includes(p)).pop() || ''
     this.hotkey.keycode = this.keyNameToCode(key)
+  }
+
+  /**
+   * Parse mic hotkey string like "Ctrl+Shift+Space" into modifier flags + keycode.
+   */
+  private parseMicHotkey(combo: string): void {
+    const parts = combo.split('+').map((s) => s.trim())
+    this.micHotkey.ctrl = parts.includes('Ctrl')
+    this.micHotkey.alt = parts.includes('Alt')
+    this.micHotkey.shift = parts.includes('Shift')
+    this.micHotkey.meta = parts.includes('Meta')
+
+    const key = parts.filter((p) => !['Ctrl', 'Alt', 'Shift', 'Meta'].includes(p)).pop() || ''
+    this.micHotkey.keycode = this.keyNameToCode(key)
   }
 
   /**
@@ -110,7 +166,7 @@ export class HotkeyService extends BaseService {
       if (e.keycode === K.Shift || e.keycode === K.ShiftRight) this.modifiers.shift = true
       if (e.keycode === K.Meta || e.keycode === K.MetaRight) this.modifiers.meta = true
 
-      // Check combo match
+      // Check EVA-01 toggle combo match
       if (
         this.modifiers.ctrl === this.hotkey.ctrl &&
         this.modifiers.alt === this.hotkey.alt &&
@@ -118,8 +174,22 @@ export class HotkeyService extends BaseService {
         this.modifiers.meta === this.hotkey.meta &&
         e.keycode === this.hotkey.keycode
       ) {
-        this.log.debug(`Global hotkey: ${getConfig().hotkey} → toggle Atlas`)
+        this.log.debug(`Global hotkey: ${getConfig().hotkey} → toggle EVA-01`)
+        mainEventBus.emit('hotkey:toggle-eva-01')
         mainEventBus.emit('hotkey:toggle-atlas')
+      }
+
+      // Check mic command hotkey combo match
+      if (
+        this.micHotkey.keycode !== 0 &&
+        this.modifiers.ctrl === this.micHotkey.ctrl &&
+        this.modifiers.alt === this.micHotkey.alt &&
+        this.modifiers.shift === this.micHotkey.shift &&
+        this.modifiers.meta === this.micHotkey.meta &&
+        e.keycode === this.micHotkey.keycode
+      ) {
+        this.log.debug('Global hotkey: toggle mic command')
+        mainEventBus.emit('hotkey:toggle-mic')
       }
     }
 

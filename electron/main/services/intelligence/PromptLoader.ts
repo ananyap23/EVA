@@ -84,9 +84,28 @@ export class PromptLoader {
       return ''
     }
 
-    // Replace {{key}} with values
+    // Replace {{key}} with values, applying speech style to personality
     if (vars) {
-      for (const [key, value] of Object.entries(vars)) {
+      const enrichedVars = { ...vars }
+      if (enrichedVars.personality) {
+        try {
+          const { getConfig } = require('@electron/utils/config')
+          const style = getConfig().tts?.style
+          if (style === 'concise') {
+            enrichedVars.personality += '\nSpeech style: Be concise, direct, and keep spoken responses brief (1-2 sentences).'
+          } else if (style === 'expressive') {
+            enrichedVars.personality += '\nSpeech style: Speak with warm, engaging, and expressive personality.'
+          } else if (style === 'pilot') {
+            enrichedVars.personality += '\nSpeech style: Speak with calm, focused EVA-01 pilot cadence. Direct, tactical, and alert.'
+          } else if (style === 'formal') {
+            enrichedVars.personality += '\nSpeech style: Speak in a formal, respectful, and articulate manner.'
+          }
+        } catch {
+          // ignore if config not yet initialized
+        }
+      }
+
+      for (const [key, value] of Object.entries(enrichedVars)) {
         content = content.split(`{{${key}}}`).join(value)
       }
     }

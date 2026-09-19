@@ -102,7 +102,7 @@ export default defineComponent({
         ) : this.sessions.length === 0 ? (
           <div class="memory-empty">
             <span class="memory-empty__icon">chat_bubble_outline</span>
-            <span>No conversations yet. Start chatting with Atlas!</span>
+            <span>No conversations yet. Start chatting with EVA-01!</span>
           </div>
         ) : (
           <div class="memory-sessions">

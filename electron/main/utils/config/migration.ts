@@ -68,8 +68,13 @@ export function migrateFlat(parsed: Record<string, unknown>): Record<string, unk
     }
   }
 
+  if (parsed.activePersonaId === 'atlas-default') {
+    parsed.activePersonaId = 'eva-01-default'
+    migrated = true
+  }
+
   if (migrated) {
-    log.info('Migrated legacy flat config keys to nested structure')
+    log.info('Migrated legacy config keys/values to nested structure')
   }
 
   return parsed

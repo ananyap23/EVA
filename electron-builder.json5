@@ -2,10 +2,10 @@
 {
   $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   icon: "build/icon.ico",
-  artifactName: "atlas-${version}.${ext}",
-  appId: "com.dortanes.atlas",
-  executableName: "atlas",
-  productName: "Atlas",
+  artifactName: "eva-01-${version}.${ext}",
+  appId: "com.dortanes.eva01",
+  executableName: "eva-01",
+  productName: "EVA-01",
   asar: true,
   extraResources: [
     {
@@ -41,7 +41,7 @@
   nsis: {
     oneClick: true,
     perMachine: false,
-    shortcutName: "Atlas",
+    shortcutName: "EVA-01",
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: true,

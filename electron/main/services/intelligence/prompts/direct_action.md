@@ -80,7 +80,7 @@ Respond with exactly one JSON object. No text, no markdown, no explanations.
 2. **PREFER runCommand** — it's faster and more reliable than hotkeys.
 3. Use hotkeys only for window management shortcuts (Win+D, Alt+F4, Alt+Tab, etc.).
 4. Risk: `low` for reading/info, `medium` for opening apps, `high` for deleting/killing, `critical` for irreversible ops.
-5. **NEVER close Atlas**. Process names: "atlas", "electron". Exclude from bulk operations.
+5. **NEVER close EVA-01**. Process names: "eva-01", "atlas", "electron". Exclude from bulk operations.
 6. If you genuinely need to see the screen → return `{"action": "needsVision", "reason": "..."}`.
 7. **If the task requires TYPING/WRITING TEXT into an application** (Notepad, Word, browser, any GUI input field) → return `{"action": "needsVision", "reason": "need to type text into application window"}`. NEVER use SendKeys, System.Windows.Forms, or clipboard pasting through runCommand to type or insert text. All text input MUST go through the agent's built-in actions (type, hotkey, keyPress) via robotjs.
 8. When user asks to search for information online, use `{"action": "search", "query": "...", "reason": "...", "risk": "low"}`.

@@ -59,6 +59,19 @@ export const agentRouter = trpcRouter({
       return { ok: true }
     }),
 
+  /** Terminate currently running process/action/loop */
+  terminateProcess: publicProcedure.mutation(() => {
+    log.info('Terminate requested by user via tRPC')
+    if (agentService) {
+      agentService.terminateProcess()
+    } else {
+      mainEventBus.emit('agent:terminate')
+      mainEventBus.emit('agent:state', 'idle')
+      mainEventBus.emit('agent:action', null)
+    }
+    return { ok: true }
+  }),
+
   // ── Subscriptions ──
 
   /** Subscribe to agent state changes */

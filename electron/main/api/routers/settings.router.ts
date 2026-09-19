@@ -49,6 +49,10 @@ const ttsSchema = z.object({
   voiceId: z.string().optional(),
   model: z.string().optional(),
   enabled: z.boolean().optional(),
+  speakerDeviceId: z.string().optional(),
+  rate: z.number().optional(),
+  pitch: z.number().optional(),
+  style: z.string().optional(),
 }).optional()
 
 const agentSchema = z.object({
@@ -64,7 +68,13 @@ const agentSchema = z.object({
 
 const sttSchema = z.object({
   enabled: z.boolean().optional(),
+  provider: z.enum(['in-app-whisper', 'hybrid', 'whisper', 'vosk']).optional(),
   language: z.string().optional(),
+  micDeviceId: z.string().optional(),
+  wakeWord: z.string().optional(),
+  whisperEndpoint: z.string().optional(),
+  whisperModel: z.string().optional(),
+  inAppWhisperModel: z.string().optional(),
 }).optional()
 
 export const settingsRouter = trpcRouter({
@@ -161,6 +171,52 @@ export const settingsRouter = trpcRouter({
       const updated = getConfig()
       mainEventBus.emit('config:changed', updated)
       return updated
+    }),
+
+  /** Test connection to local LLM endpoint (e.g. Ollama, LM Studio, vLLM) and fetch available models */
+  testLocalLLM: publicProcedure
+    .input(z.object({
+      baseURL: z.string(),
+      apiKey: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const url = input.baseURL.replace(/\/+$/, '')
+      const modelsUrl = `${url}/models`
+      try {
+        const headers: Record<string, string> = {}
+        if (input.apiKey) headers['Authorization'] = `Bearer ${input.apiKey}`
+
+        const res = await fetch(modelsUrl, {
+          method: 'GET',
+          headers,
+          signal: AbortSignal.timeout(5000),
+        })
+
+        if (!res.ok) {
+          return {
+            ok: false,
+            models: [] as string[],
+            error: `HTTP ${res.status}: ${res.statusText}`,
+          }
+        }
+
+        const data = await res.json() as { data?: Array<{ id: string }> }
+        const models = Array.isArray(data?.data)
+          ? data.data.map((m) => m.id).filter(Boolean)
+          : []
+
+        return {
+          ok: true,
+          models,
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return {
+          ok: false,
+          models: [] as string[],
+          error: msg || 'Failed to connect to local LLM server',
+        }
+      }
     }),
 
   /** Get app version from package.json */

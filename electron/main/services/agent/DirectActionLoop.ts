@@ -323,16 +323,22 @@ export async function runDirectAction(
       }
 
       blurForAction()
-      const stopExec = sessionLogger?.startTimer('Action execution')
+      let resolvedCommand = action.command
+      if (action.action === 'runCommand' && !resolvedCommand && action.response) {
+        const trimmed = action.response.trim()
+        if (trimmed.length < 120 && !trimmed.includes('\n')) {
+          resolvedCommand = trimmed
+        }
+      }
+
       const result = await motorService.executeAction({
         action: action.action as 'runCommand' | 'hotkey' | 'keyPress',
-        command: action.command,
+        command: resolvedCommand,
         keys: action.keys,
         key: action.key,
         reason: action.reason,
         risk: action.risk,
       })
-      stopExec?.()
       restoreAfterAction()
 
       if (!result.success) {

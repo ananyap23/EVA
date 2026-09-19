@@ -20,11 +20,16 @@ export default defineComponent({
     return {
       recording: false,
       recordingHandler: null as ((e: KeyboardEvent) => void) | null,
+      recordingMic: false,
+      recordingMicHandler: null as ((e: KeyboardEvent) => void) | null,
       resetting: false,
     }
   },
 
-  beforeUnmount() { this.stopRecording() },
+  beforeUnmount() {
+    this.stopRecording()
+    this.stopRecordingMic()
+  },
 
   methods: {
     stopRecording() {
@@ -52,6 +57,35 @@ export default defineComponent({
         this.stopRecording()
       }
       this.recordingHandler = handler
+      window.addEventListener('keydown', handler, true)
+    },
+    stopRecordingMic() {
+      if (this.recordingMicHandler) {
+        window.removeEventListener('keydown', this.recordingMicHandler, true)
+        this.recordingMicHandler = null
+      }
+      this.recordingMic = false
+    },
+    startRecordingMic() {
+      this.stopRecordingMic()
+      this.recordingMic = true
+      const handler = (e: KeyboardEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const parts: string[] = []
+        if (e.ctrlKey) parts.push('Ctrl')
+        if (e.altKey) parts.push('Alt')
+        if (e.shiftKey) parts.push('Shift')
+        if (e.metaKey) parts.push('Meta')
+        const key = e.key
+        if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return
+        parts.push(key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key)
+        if (this.config.stt) {
+          this.$emit('update', 'stt', { ...this.config.stt, micHotkey: parts.join('+') })
+        }
+        this.stopRecordingMic()
+      }
+      this.recordingMicHandler = handler
       window.addEventListener('keydown', handler, true)
     },
     openLogFile() {
@@ -87,7 +121,7 @@ export default defineComponent({
             <div class="settings-row">
               <div class="settings-row__info">
                 <span class="settings-row__label">Position</span>
-                <span class="settings-row__hint">Where Atlas appears on screen</span>
+                <span class="settings-row__hint">Where EVA-01 appears on screen</span>
               </div>
               <div class="settings-row__control">
                 <CustomSelect
@@ -104,7 +138,7 @@ export default defineComponent({
             <div class="settings-row">
               <div class="settings-row__info">
                 <span class="settings-row__label">Global Hotkey</span>
-                <span class="settings-row__hint">Toggle Atlas visibility</span>
+                <span class="settings-row__hint">Toggle EVA-01 visibility</span>
               </div>
               <div class="settings-row__control">
                 <div class="settings-hotkey">
@@ -113,6 +147,34 @@ export default defineComponent({
                     {this.recording ? 'Press keys…' : 'Change'}
                   </button>
                 </div>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row__info">
+                <span class="settings-row__label">Mic Command Shortcut</span>
+                <span class="settings-row__hint">Toggle microphone listening directly</span>
+              </div>
+              <div class="settings-row__control">
+                <div class="settings-hotkey">
+                  <kbd class="settings-hotkey__key">{this.config.stt?.micHotkey || 'Ctrl+Shift+Space'}</kbd>
+                  <button class="settings-hotkey__record" onClick={() => this.startRecordingMic()}>
+                    {this.recordingMic ? 'Press keys…' : 'Change'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row__info">
+                <span class="settings-row__label">Always on Top</span>
+                <span class="settings-row__hint">Keep EVA-01 above all open applications when shown</span>
+              </div>
+              <div class="settings-row__control">
+                <input type="checkbox" class="settings-field__toggle" checked={ui.alwaysOnTop ?? true}
+                  onChange={(e: Event) => {
+                    const checked = (e.target as HTMLInputElement).checked
+                    ui.alwaysOnTop = checked
+                    this.$emit('update', 'ui', { ...ui, alwaysOnTop: checked })
+                  }} />
               </div>
             </div>
           </div>

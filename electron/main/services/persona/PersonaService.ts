@@ -15,7 +15,7 @@ import type { FactService } from '@electron/services/memory/FactService'
  * Storage: `userData/Personas` — a flat JSON array of AgentProfile[].
  * Each persona can optionally have prompt overrides in `userData/Prompts/{personaId}/`.
  *
- * The default "Atlas" persona is always present and cannot be deleted.
+ * The default "EVA-01" persona is always present and cannot be deleted.
  */
 export class PersonaService extends BaseService {
   private personas: AgentProfile[] = []
@@ -35,6 +35,15 @@ export class PersonaService extends BaseService {
   async init(): Promise<void> {
     this.filePath = path.join(app.getPath('userData'), 'Personas')
     this.loadFromDisk()
+
+    // Migrate legacy atlas-default persona to eva-01-default
+    const legacyAtlas = this.personas.find((p) => p.id === 'atlas-default')
+    if (legacyAtlas) {
+      legacyAtlas.id = DEFAULT_PERSONA.id
+      legacyAtlas.name = DEFAULT_PERSONA.name
+      legacyAtlas.avatar = DEFAULT_PERSONA.avatar
+      this.saveToDisk()
+    }
 
     // Ensure default persona always exists
     if (!this.personas.find((p) => p.id === DEFAULT_PERSONA.id)) {

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { createLogger } from '@electron/utils/logger'
+import { getConfig } from '@electron/utils/config'
 import type { STTService } from '@electron/services/stt/STTService'
 import { getModelStatus as getModelStatusForLanguage } from '@electron/services/stt/ModelManager'
 
@@ -97,6 +98,24 @@ export const audioRouter = trpcRouter({
     })
   }),
 
+  /** Transcribe recorded speech audio via offline Whisper flow */
+  transcribeAudio: publicProcedure
+    .input(z.object({ audioBase64: z.string(), language: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      if (!sttService) throw new Error('STTService is not available')
+      const buffer = Buffer.from(input.audioBase64, 'base64')
+      const text = await sttService.transcribeAudio(buffer, input.language)
+      return { text }
+    }),
+
+  /** Test connectivity to offline Whisper endpoint */
+  testWhisper: publicProcedure
+    .input(z.object({ endpoint: z.string().optional(), apiKey: z.string().optional() }).optional())
+    .mutation(async ({ input }) => {
+      if (!sttService) return { ok: false, error: 'STTService not available' }
+      return sttService.testWhisperConnection(input?.endpoint, input?.apiKey)
+    }),
+
   // ── TTS (Phase 3.5) ──
 
   /** Trigger TTS to speak text */
@@ -130,10 +149,10 @@ export const audioRouter = trpcRouter({
     })
   }),
 
-  /** Subscribe to TTS audio format (mpeg or opus) — emitted when speech starts */
+  /** Subscribe to TTS audio format (mpeg, opus, or web-speech) — emitted when speech starts */
   onTTSFormat: publicProcedure.subscription(() => {
-    return observable<{ format: 'mpeg' | 'opus' }>((emit) => {
-      function onFormat(payload: { format: 'mpeg' | 'opus' }) {
+    return observable<{ format: 'mpeg' | 'opus' | 'web-speech' }>((emit) => {
+      function onFormat(payload: { format: 'mpeg' | 'opus' | 'web-speech' }) {
         emit.next(payload)
       }
 
@@ -161,5 +180,70 @@ export const audioRouter = trpcRouter({
         mainEventBus.off('tts:audio', onAudio)
       }
     })
+  }),
+
+  /** Subscribe to Web Speech synthesis requests */
+  onTTSText: publicProcedure.subscription(() => {
+    return observable<{ text: string; voice?: string; rate?: number; pitch?: number }>((emit) => {
+      function onText(payload: { text: string; voice?: string; rate?: number; pitch?: number }) {
+        emit.next(payload)
+      }
+
+      mainEventBus.on('tts:speak-text', onText)
+
+      return () => {
+        mainEventBus.off('tts:speak-text', onText)
+      }
+    })
+  }),
+
+  /** Auto-detect the best TTS voice engine based on user PC hardware, locale, and network */
+  detectOptimalTTS: publicProcedure.query(async () => {
+    const cfg = getConfig()
+
+    // 1. If ElevenLabs API key is configured, recommend ElevenLabs for maximum human realism
+    if (cfg.tts.apiKey && cfg.tts.apiKey.trim().length > 10) {
+      return {
+        recommendedProvider: 'elevenlabs',
+        label: '🎙️ ElevenLabs (AI Realistic Voice)',
+        reason: 'Active API key detected — provides emotional nuances and ultra-realistic voices.',
+      }
+    }
+
+    // 2. If language is Russian, recommend Yandex Alice
+    if (cfg.stt.language === 'ru' || cfg.tts.accent === 'ru') {
+      return {
+        recommendedProvider: 'yandex-alice',
+        label: '🇷🇺 Yandex Alice (Neural Russian Voice)',
+        reason: 'Optimal for Russian speech synthesis with natural inflection.',
+      }
+    }
+
+    // 3. Check connectivity to Google Translate TTS
+    let isOnline = false
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 2000)
+      const res = await fetch('https://translate.google.com', { method: 'HEAD', signal: controller.signal })
+      clearTimeout(timer)
+      isOnline = res.ok || res.status === 302 || res.status === 200
+    } catch {
+      isOnline = false
+    }
+
+    if (isOnline) {
+      return {
+        recommendedProvider: 'google-translate',
+        label: '🌍 Google Free Voice (Multi-Accent, Zero API Key)',
+        reason: 'Ultra-low latency, zero API keys required, and natural regional accents.',
+      }
+    }
+
+    // 4. Offline fallback
+    return {
+      recommendedProvider: 'web-speech',
+      label: '🔊 Web Speech (Local System Voice / Offline)',
+      reason: 'Runs completely offline using your Windows installed voices with zero latency.',
+    }
   }),
 })

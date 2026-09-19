@@ -65,7 +65,7 @@ export default defineComponent({
     return (
       <div style="max-width: 720px;">
         <p class="subtab-description">
-          Knowledge that Atlas remembers about you. Facts are extracted from conversations and can be added manually.
+          Knowledge that EVA-01 remembers about you. Facts are extracted from conversations and can be added manually.
         </p>
 
         {/* Add fact input */}
@@ -85,7 +85,7 @@ export default defineComponent({
         ) : this.facts.length === 0 ? (
           <div class="subtab-empty">
             <span class="subtab-empty__icon">lightbulb</span>
-            <span>No facts yet. Start chatting and Atlas will learn about you!</span>
+            <span>No facts yet. Start chatting and EVA-01 will learn about you!</span>
           </div>
         ) : (
           <>

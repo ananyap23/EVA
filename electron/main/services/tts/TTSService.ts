@@ -2,6 +2,7 @@ import { BaseService } from '@electron/services/base/BaseService'
 import { BaseTTSProvider } from './providers/BaseTTSProvider'
 import { ElevenLabsProvider } from './providers/ElevenLabsProvider'
 import { YandexAliceProvider } from './providers/YandexAliceProvider'
+import { GoogleTranslateTTSProvider } from './providers/GoogleTranslateTTSProvider'
 import { getConfig, saveConfig, type AppConfig } from '@electron/utils/config'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { formatTTSError, isTTSQuotaError } from '@electron/utils/ttsErrors'
@@ -48,21 +49,45 @@ export class TTSService extends BaseService {
       return
     }
 
-    // Yandex Alice doesn't need an API key
-    const needsApiKey = config.tts.provider !== 'yandex-alice'
+    const effective = this.resolveEffectiveProvider(config)
+    const needsApiKey = effective === 'elevenlabs'
 
     if (needsApiKey && !config.tts.apiKey) {
       this.log.warn('No TTS API key configured — TTS calls will fail')
       mainEventBus.emit('agent:warning', {
         id: 'missing-tts-key',
-        message: 'TTS API key not configured. Set your API key in settings to enable voice output.',
+        message: 'TTS API key not configured. Set your API key in settings or select Web Speech / Google Free Voice for free voice output.',
         dismissable: true,
       })
       return
     }
 
-    this.createProvider(config.tts.provider, config.tts.apiKey, this.getActiveVoiceId())
-    this.log.info(`TTSService initialized (provider: ${config.tts.provider})`)
+    this.createProvider(effective, config.tts.apiKey, this.getActiveVoiceId())
+    this.log.info(`TTSService initialized (provider: ${config.tts.provider}, effective: ${effective})`)
+  }
+
+  /**
+   * Determine the most effective TTS provider for this machine configuration.
+   */
+  resolveEffectiveProvider(config?: AppConfig): string {
+    const cfg = config || getConfig()
+    if (cfg.tts.provider && cfg.tts.provider !== 'auto') {
+      return cfg.tts.provider
+    }
+
+    // Auto-detect best engine:
+    // 1. If ElevenLabs API key is configured, use ElevenLabs for maximum human realism
+    if (cfg.tts.apiKey && cfg.tts.apiKey.trim().length > 10) {
+      return 'elevenlabs'
+    }
+
+    // 2. If language is Russian, use Yandex Alice
+    if (cfg.stt.language === 'ru' || cfg.tts.accent === 'ru') {
+      return 'yandex-alice'
+    }
+
+    // 3. Default to Google Free Voice (zero API key, natural multi-accent neural audio)
+    return 'google-translate'
   }
 
   async dispose(): Promise<void> {
@@ -95,40 +120,50 @@ export class TTSService extends BaseService {
   }
 
   /** Audio format for the current provider */
-  get audioFormat(): 'mpeg' | 'opus' {
+  get audioFormat(): 'mpeg' | 'opus' | 'web-speech' {
+    const config = getConfig()
+    const effective = this.resolveEffectiveProvider(config)
+    if (effective === 'web-speech') return 'web-speech'
     return this.provider?.name === 'yandex-alice' ? 'opus' : 'mpeg'
   }
 
   /** Create a provider by name */
   private createProvider(name: string, apiKey: string, voiceId: string): void {
     const config = getConfig()
+    const resolved = name === 'auto' ? this.resolveEffectiveProvider(config) : name
 
     // Dispose previous provider before creating a new one
     this.disposeProvider()
 
-    switch (name) {
+    switch (resolved) {
+      case 'web-speech':
+        this.provider = null
+        break
       case 'yandex-alice':
         this.provider = new YandexAliceProvider()
+        break
+      case 'google-translate':
+        this.provider = new GoogleTranslateTTSProvider(config.tts.accent || 'en-US')
         break
       case 'elevenlabs':
         this.provider = new ElevenLabsProvider(apiKey, voiceId, config.tts.model)
         break
       default:
-        this.log.error(`Unknown TTS provider: ${name}, falling back to elevenlabs`)
-        this.provider = new ElevenLabsProvider(apiKey, voiceId, config.tts.model)
+        this.provider = new GoogleTranslateTTSProvider(config.tts.accent || 'en-US')
     }
   }
 
   /** Switch provider at runtime */
   setProvider(name: string): void {
     const config = getConfig()
-    const needsApiKey = name !== 'yandex-alice'
+    const resolved = name === 'auto' ? this.resolveEffectiveProvider(config) : name
+    const needsApiKey = resolved === 'elevenlabs'
     if (needsApiKey && !config.tts.apiKey) {
       this.log.error('Cannot switch TTS provider: no API key')
       return
     }
-    this.createProvider(name, config.tts.apiKey, this.getActiveVoiceId())
-    this.log.info(`Switched TTS to provider: ${name}`)
+    this.createProvider(resolved, config.tts.apiKey, this.getActiveVoiceId())
+    this.log.info(`Switched TTS to provider: ${name} (resolved: ${resolved})`)
   }
 
   /** Toggle TTS on/off */
@@ -138,7 +173,7 @@ export class TTSService extends BaseService {
 
     if (enabled && !this.provider) {
       const config = getConfig()
-      if (config.tts.apiKey) {
+      if (config.tts.apiKey || config.tts.provider === 'yandex-alice' || config.tts.provider === 'web-speech' || config.tts.provider === 'google-translate') {
         this.createProvider(config.tts.provider, config.tts.apiKey, this.getActiveVoiceId())
       }
     }
@@ -150,26 +185,65 @@ export class TTSService extends BaseService {
 
   /** Whether the service has a usable provider */
   get isReady(): boolean {
-    return this.provider !== null && getConfig().tts.enabled
+    const config = getConfig()
+    if (config.tts.provider === 'web-speech') return config.tts.enabled
+    return this.provider !== null && config.tts.enabled
   }
 
   /** Speak text — streams audio chunks via event bus */
   async speak(text: string): Promise<void> {
-    if (!this.provider) {
-      this.log.warn('No TTS provider configured, skipping speech')
-      return
-    }
+    const config = getConfig()
 
-    if (!getConfig().tts.enabled) {
+    if (!config.tts.enabled) {
       this.log.debug('TTS disabled, skipping speech')
       return
     }
 
+    const effectiveProvider = this.resolveEffectiveProvider(config)
+
+    // Web Speech browser-native playback
+    if (effectiveProvider === 'web-speech') {
+      this.stop()
+      this.speaking = true
+      mainEventBus.emit('tts:status', { speaking: true })
+      mainEventBus.emit('tts:format', { format: 'web-speech' })
+      mainEventBus.emit('tts:speak-text', {
+        text,
+        voice: this.getActiveVoiceId(),
+        rate: config.tts.rate ?? 1.0,
+        pitch: config.tts.pitch ?? 1.0,
+      })
+      return
+    }
+
+    if (effectiveProvider === 'google-translate') {
+      const targetAccent = config.tts.accent || 'en-US'
+      if (!this.provider || !(this.provider instanceof GoogleTranslateTTSProvider)) {
+        this.createProvider('google-translate', '', '')
+      } else if ((this.provider as GoogleTranslateTTSProvider).currentAccent !== targetAccent) {
+        (this.provider as GoogleTranslateTTSProvider).setAccent(targetAccent)
+      }
+    }
+
+    if (!this.provider) {
+      this.createProvider(effectiveProvider, config.tts.apiKey, this.getActiveVoiceId())
+    }
+
+    if (!this.provider) {
+      this.log.warn('No TTS provider configured, falling back to Web Speech')
+      mainEventBus.emit('tts:speak-text', {
+        text,
+        voice: this.getActiveVoiceId(),
+        rate: config.tts.rate ?? 1.0,
+        pitch: config.tts.pitch ?? 1.0,
+      })
+      return
+    }
+
     // Only recreate provider if the voice changed (avoid unnecessary client creation)
-    const config = getConfig()
     const targetVoice = this.getActiveVoiceId()
     if (config.tts.apiKey && this.activeVoiceId !== targetVoice) {
-      this.createProvider(config.tts.provider, config.tts.apiKey, targetVoice)
+      this.createProvider(effectiveProvider, config.tts.apiKey, targetVoice)
       this.activeVoiceId = targetVoice
     }
 
@@ -198,7 +272,15 @@ export class TTSService extends BaseService {
       }
     } catch (err) {
       const message = formatTTSError(err)
-      this.log.error('TTS stream error:', err)
+      this.log.error('TTS stream error, falling back to Web Speech:', err)
+
+      // Fall back to Web Speech synthesis so audio is never dropped
+      mainEventBus.emit('tts:speak-text', {
+        text,
+        voice: this.getActiveVoiceId(),
+        rate: config.tts.rate ?? 1.0,
+        pitch: config.tts.pitch ?? 1.0,
+      })
 
       // Surface error as a dismissable warning in WarningIsland
       mainEventBus.emit('agent:warning', {
@@ -229,11 +311,13 @@ export class TTSService extends BaseService {
 
   /** Stop current speech */
   stop(): void {
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
+    if (this.speaking) {
+      this.abortController?.abort()
+      this.speaking = false
+      mainEventBus.emit('tts:status', { speaking: false })
+      mainEventBus.emit('tts:stop-audio')
+      this.log.debug('TTS speech stopped')
     }
-    this.speaking = false
   }
 
   /** Event handler: tts:speak */
@@ -266,7 +350,7 @@ export class TTSService extends BaseService {
       return
     }
 
-    const needsApiKey = config.tts.provider !== 'yandex-alice'
+    const needsApiKey = config.tts.provider !== 'yandex-alice' && config.tts.provider !== 'web-speech' && config.tts.provider !== 'google-translate'
 
     // TTS enabled — create or rebuild provider
     if (!needsApiKey || config.tts.apiKey) {

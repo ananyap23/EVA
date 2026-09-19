@@ -39,19 +39,25 @@ export default defineComponent({
 
   setup() {
     /* ── Composables (intermediate I/O layer) ── */
-    const { state: agentState, currentAction, sendCommand } = useAgent()
+    const { state: agentState, currentAction, sendCommand, terminateProcess } = useAgent()
     const { permissions, respond: respondPermission } = usePermissions()
     const { warnings, dismiss: dismissWarning } = useWarnings()
     const { tasks, setTasks, progressPercent, progressLabel } = useMicrotasks()
     const { response, dismissing: responseDismissing, dismiss: dismissResponse } = useResponse()
     const { searchData, dismissing: searchDismissing, dismiss: dismissSearch, clear: clearSearch, openFile, revealFile } = useSearch()
 
+    /* ── STT (always-on voice input) ── */
+    const { isActivated, transcript: sttTranscript, chunks: sttChunks, enable: enableSTT, disable: disableSTT } = useSTT()
+    const sttEnabled = ref(false)
+
     /* ── UI Position (from config, reactive) ── */
     const positionSide = ref<'left' | 'right' | 'center'>('right')
 
-    // Load initial position
+    // Load initial config (position + STT)
     api.settings.getConfig.query().then((cfg) => {
       positionSide.value = cfg.ui.positionSide || 'right'
+      sttEnabled.value = cfg.stt.enabled
+      if (cfg.stt.enabled) enableSTT()
     })
 
     // Subscribe to config changes for live position updates + STT toggle
@@ -64,6 +70,7 @@ export default defineComponent({
           enableSTT()
         } else if (!cfg.stt.enabled && sttEnabled.value) {
           sttEnabled.value = false
+          disableSTT()
         }
       },
     })
@@ -84,16 +91,6 @@ export default defineComponent({
 
     /* ── TTS Audio Playback (MSE streaming) ── */
     useTTS()
-
-    /* ── STT (always-on voice input) ── */
-    const { isActivated, transcript: sttTranscript, chunks: sttChunks, enable: enableSTT } = useSTT()
-    const sttEnabled = ref(false)
-
-    // Auto-enable STT if configured
-    api.settings.getConfig.query().then((cfg) => {
-      sttEnabled.value = cfg.stt.enabled
-      if (cfg.stt.enabled) enableSTT()
-    })
 
     /* ── Agent Visibility (toggled from tray or Ctrl+Space) ── */
     const agentVisible = ref(true)
@@ -134,7 +131,10 @@ export default defineComponent({
       },
     })
 
-    onUnmounted(() => visibilitySub.unsubscribe())
+    onUnmounted(() => {
+      visibilitySub.unsubscribe()
+      configSub.unsubscribe()
+    })
 
     /* ── InputBar visibility ── */
     const showInput = ref(false)
@@ -179,10 +179,17 @@ export default defineComponent({
       }, 400)
     }
 
-    /* ── Escape key — close InputBar or hide Atlas ── */
+    /* ── Escape key — terminate process if running, or close InputBar / hide EVA-01 ── */
     function onEscapeKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
       if (!agentVisible.value) return
+
+      // If agent is active or performing an action, terminate it immediately!
+      if (agentState.value !== 'idle' || currentAction.value) {
+        terminateProcess()
+        return
+      }
+
       if (showInput.value) {
         closeInput()
       } else {
@@ -229,6 +236,7 @@ export default defineComponent({
       agentState,
       currentAction,
       sendCommand,
+      terminateProcess,
       permissions,
       warnings,
       tasks,
@@ -299,7 +307,10 @@ export default defineComponent({
             )}
             {/* P3: Action — current task progress */}
             {this.currentAction && (
-              <ActionIsland action={this.currentAction} />
+              <ActionIsland
+                action={this.currentAction}
+                onTerminate={() => this.terminateProcess()}
+              />
             )}
           </div>
 
@@ -361,7 +372,23 @@ export default defineComponent({
             onMouseleave={this.onMouseLeaveUI}
           >
             <AgentOrb state={this.agentState} />
-            <span class="main-view__state-label">{this.agentState}</span>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 4px;">
+              <span class="main-view__state-label">{this.agentState}</span>
+              {this.agentState !== 'idle' && (
+                <button
+                  type="button"
+                  class="main-view__terminate-btn"
+                  title="Terminate running process / loop (Esc)"
+                  onClick={(e: MouseEvent) => {
+                    e.stopPropagation()
+                    this.terminateProcess()
+                  }}
+                >
+                  <span class="main-view__terminate-icon">stop</span>
+                  <span>Stop</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Input Bar — always in DOM for smooth height transition */}

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { Tray, Menu, nativeImage, app } from 'electron'
-import { getConfig } from './utils/config'
+import { getConfig, saveConfig } from './utils/config'
 import { createLogger } from './utils/logger'
 import { mainEventBus } from './utils/eventBus'
 import { toggleWindow, getWindow } from './WindowManager'
@@ -35,7 +35,7 @@ export function createTray(personaService?: PersonaService): void {
   personaServiceRef = personaService ?? null
   const icon = nativeImage.createFromPath(getTrayIconPath()).resize({ width: 16, height: 16 })
   tray = new Tray(icon)
-  tray.setToolTip('Atlas')
+  tray.setToolTip('EVA-01')
 
   buildContextMenu()
 
@@ -72,7 +72,7 @@ function buildContextMenu(): void {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show/Hide Atlas',
+      label: 'Show/Hide EVA-01',
       click: () => toggleWindow(),
     },
     { type: 'separator' },
@@ -91,6 +91,14 @@ function buildContextMenu(): void {
     },
     { type: 'separator' },
     {
+      label: 'Always on Top',
+      type: 'checkbox',
+      checked: getConfig().ui.alwaysOnTop ?? true,
+      click: (item) => {
+        saveConfig({ ui: { alwaysOnTop: item.checked } })
+      },
+    },
+    {
       label: 'Toggle DevTools',
       click: () => {
         getWindow()?.webContents.toggleDevTools()
@@ -105,7 +113,7 @@ function buildContextMenu(): void {
     },
     { type: 'separator' },
     {
-      label: 'Quit Atlas',
+      label: 'Quit EVA-01',
       click: () => {
         app.quit()
       },

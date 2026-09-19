@@ -54,11 +54,15 @@ export class IntelligenceService extends BaseService {
       return
     }
 
-    // Create providers (vision & classifier fall back to textModel if not set)
+    // Create providers (respecting separateVisionModel toggle)
+    const visionModelName = config.llm.separateVisionModel
+      ? (config.llm.visionModel || config.llm.textModel)
+      : config.llm.textModel
+
     this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, config.llm.textModel, config.llm.baseURL)
     this.visionProvider = this.createProvider(
       config.llm.provider, config.llm.apiKey,
-      config.llm.visionModel || config.llm.textModel,
+      visionModelName,
       config.llm.baseURL,
     )
     this.classifierProvider = this.createProvider(
@@ -69,7 +73,7 @@ export class IntelligenceService extends BaseService {
 
     this.log.info(
       `IntelligenceService initialized — text: ${config.llm.textModel}, ` +
-      `vision: ${config.llm.visionModel || config.llm.textModel}, ` +
+      `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
       `classifier: ${config.llm.classifierModel || config.llm.textModel}`,
     )
 
@@ -152,10 +156,14 @@ export class IntelligenceService extends BaseService {
     mainEventBus.emit('agent:dismiss-warning', { id: 'missing-api-key' })
     mainEventBus.emit('agent:dismiss-warning', { id: 'missing-text-model' })
 
+    const visionModelName = config.llm.separateVisionModel
+      ? (config.llm.visionModel || config.llm.textModel)
+      : config.llm.textModel
+
     this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, config.llm.textModel, config.llm.baseURL)
     this.visionProvider = this.createProvider(
       config.llm.provider, config.llm.apiKey,
-      config.llm.visionModel || config.llm.textModel,
+      visionModelName,
       config.llm.baseURL,
     )
     this.classifierProvider = this.createProvider(
@@ -166,7 +174,7 @@ export class IntelligenceService extends BaseService {
 
     this.log.info(
       `Providers reloaded — text: ${config.llm.textModel}, ` +
-      `vision: ${config.llm.visionModel || config.llm.textModel}, ` +
+      `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
       `classifier: ${config.llm.classifierModel || config.llm.textModel}`,
     )
 
@@ -185,6 +193,10 @@ export class IntelligenceService extends BaseService {
         return new GeminiProvider(apiKey, model)
       case 'openai':
         return new OpenAIProvider(apiKey, model, baseURL)
+      case 'ollama':
+        return new OpenAIProvider(apiKey || 'ollama', model, baseURL || 'http://localhost:11434/v1')
+      case 'lm-studio':
+        return new OpenAIProvider(apiKey || 'lm-studio', model, baseURL || 'http://localhost:1234/v1')
       default:
         this.log.error(`Unknown provider: ${name}, falling back to gemini`)
         return new GeminiProvider(apiKey, model)

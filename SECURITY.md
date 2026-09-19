@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Atlas, please report it responsibly.
+If you discover a security vulnerability in EVA-01, please report it responsibly.
 
 **Do NOT open a public issue.** Instead, email us directly:
 

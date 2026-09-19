@@ -39,7 +39,7 @@ export async function createWindow(): Promise<BrowserWindow> {
   const { x, y, width, height } = getActiveDisplayBounds()
 
   win = new BrowserWindow({
-    title: 'Atlas',
+    title: 'EVA-01',
     icon: `${process.env.VITE_PUBLIC}/favicon.ico`,
     width,
     height,
@@ -70,7 +70,7 @@ export async function createWindow(): Promise<BrowserWindow> {
   // Load content
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
-    if (getConfig().ui.openDevTools) {
+    if (process.env.OPEN_DEVTOOLS === 'true') {
       win.webContents.openDevTools({ mode: 'detach' })
     }
   } else {
@@ -96,8 +96,22 @@ export async function createWindow(): Promise<BrowserWindow> {
   })
 
   // Always-on-top with 'screen-saver' level — the highest z-order on Windows.
-  // Hardcoded: required for overlay to function correctly with click-through.
-  win.setAlwaysOnTop(true, 'screen-saver')
+  const initialKeepOnTop = getConfig().ui.alwaysOnTop ?? true
+  if (initialKeepOnTop) {
+    win.setAlwaysOnTop(true, 'screen-saver')
+  }
+
+  // Listen for config changes to dynamically adjust alwaysOnTop
+  mainEventBus.on('config:changed', (cfg) => {
+    if (win && cfg.ui?.alwaysOnTop !== undefined) {
+      if (cfg.ui.alwaysOnTop) {
+        win.setAlwaysOnTop(true, 'screen-saver')
+        win.moveTop()
+      } else {
+        win.setAlwaysOnTop(false)
+      }
+    }
+  })
 
   // Start hidden — user reveals via tray icon or wake word
   win.setOpacity(0)
@@ -108,20 +122,28 @@ export async function createWindow(): Promise<BrowserWindow> {
 
 // ── Show Window ──
 
-/** Make the window visible, reposition to active monitor (keeps click-through). */
+/** Make the window visible, reposition to active monitor, bring always on top (keeps click-through). */
 export function showWindow(): void {
   if (!win) return
 
-  if (!isAgentVisible) {
-    const { x, y, width, height } = getActiveDisplayBounds()
-    win.setBounds({ x, y, width, height })
-    win.setOpacity(1)
-    win.setIgnoreMouseEvents(true, { forward: true })
-    win.focus()
-    isAgentVisible = true
-    mainEventBus.emit('agent-visibility', true)
-    log.info('Agent shown')
+  const cfg = getConfig()
+  const keepOnTop = cfg.ui.alwaysOnTop ?? true
+
+  const { x, y, width, height } = getActiveDisplayBounds()
+  win.setBounds({ x, y, width, height })
+  win.setOpacity(1)
+  win.setIgnoreMouseEvents(true, { forward: true })
+
+  if (keepOnTop) {
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.moveTop()
   }
+  win.show()
+  win.focus()
+
+  isAgentVisible = true
+  mainEventBus.emit('agent-visibility', true)
+  log.info('Agent shown on top')
 }
 
 /** Show window AND disable click-through (for settings overlay). Does NOT activate the agent. */
@@ -132,8 +154,15 @@ export function showWindowForSettings(): void {
   win.setBounds({ x, y, width, height })
   win.setOpacity(1)
   win.setIgnoreMouseEvents(false)
+
+  const cfg = getConfig()
+  if (cfg.ui.alwaysOnTop ?? true) {
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.moveTop()
+  }
+  win.show()
   win.focus()
-  log.info('Window shown for settings (agent not activated)')
+  log.info('Window shown on top for settings (agent not activated)')
 }
 
 // ── Visibility Toggle ──
@@ -141,8 +170,9 @@ export function showWindowForSettings(): void {
 export function toggleWindow(): void {
   if (!win) return
 
+  const isActuallyVisible = isAgentVisible && win.getOpacity() > 0
 
-  if (isAgentVisible) {
+  if (isActuallyVisible) {
     // Notify renderer so it can animate out
     mainEventBus.emit('agent-visibility', false)
     // Give renderer time to animate, then hide
@@ -158,12 +188,20 @@ export function toggleWindow(): void {
 
     win.setOpacity(1)
     win.setIgnoreMouseEvents(true, { forward: true })
+
+    const cfg = getConfig()
+    if (cfg.ui.alwaysOnTop ?? true) {
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.moveTop()
+    }
+    win.show()
     win.focus()
+
     mainEventBus.emit('agent-visibility', true)
     isAgentVisible = true
   }
 
-  log.info(`Agent ${isAgentVisible ? 'shown' : 'hidden'}`)
+  log.info(`Agent ${isAgentVisible ? 'shown on top' : 'hidden'}`)
 }
 
 /** Unconditionally hide the window (used when closing settings without agent). */

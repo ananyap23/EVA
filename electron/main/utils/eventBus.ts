@@ -58,6 +58,8 @@ export interface MainEvents {
   }]
   /** User command from InputBar */
   'agent:command': [payload: { text: string }]
+  /** Terminate currently running process/action/loop */
+  'agent:terminate': []
   /** Start a new conversation session */
   'agent:newSession': []
   /** Ephemeral action loop steps (displayed in MicrotaskIsland alongside queued tasks) */
@@ -84,8 +86,11 @@ export interface MainEvents {
 
   // ── Hotkey Events ──
 
-  /** Global hotkey: toggle Atlas visibility + InputBar */
+  /** Global hotkey: toggle EVA-01 visibility + InputBar */
+  'hotkey:toggle-eva-01': []
   'hotkey:toggle-atlas': []
+  /** Global hotkey: toggle microphone listening directly */
+  'hotkey:toggle-mic': []
 
   // ── Audio / STT Events ──
 
@@ -108,11 +113,13 @@ export interface MainEvents {
   /** TTS speaking status changed */
   'tts:status': [payload: { speaking: boolean }]
   /** TTS audio format for current provider */
-  'tts:format': [payload: { format: 'mpeg' | 'opus' }]
+  'tts:format': [payload: { format: 'mpeg' | 'opus' | 'web-speech' }]
   /** TTS audio chunk (streaming) */
   'tts:audio': [payload: { chunk: Buffer; done: boolean }]
   /** Request TTS to speak text */
   'tts:speak': [payload: { text: string }]
+  /** Web Speech text emission for browser-native synthesis */
+  'tts:speak-text': [payload: { text: string; voice?: string; rate?: number; pitch?: number }]
   /** Request TTS to stop */
   'tts:stop': []
 }

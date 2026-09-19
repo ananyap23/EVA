@@ -293,6 +293,24 @@ export class AgentService extends BaseService {
     mainEventBus.emit('agent:microtasks', merged)
   }
 
+  /** Terminate any currently running action, shell process, queue, or loop */
+  terminateProcess(): void {
+    this.log.info('Terminating running process and resetting agent state...')
+    if (this.motorService) {
+      this.motorService.killRunningProcess()
+      this.motorService.hideCursor()
+    }
+    mainEventBus.emit('tts:stop')
+    this.queue.clear()
+    this.actionSteps = []
+    mainEventBus.emit('agent:microtasks', [])
+    mainEventBus.emit('agent:terminate')
+    this.stateMachine.reset()
+    this.busy = false
+    mainEventBus.emit('agent:state', 'idle')
+    mainEventBus.emit('agent:action', null)
+  }
+
   /** Get action logs for a persona */
   getActionLogs(personaId: string): ActionLogEntry[] {
     return this.actionLogs.get(personaId) ?? []

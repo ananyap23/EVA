@@ -14,8 +14,19 @@ import { api } from '@/api'
  */
 
 const speaking = ref(false)
+let ttsEndedAt = 0
 
-let currentFormat: 'mpeg' | 'opus' = 'mpeg'
+/**
+ * Returns true if TTS is actively speaking, or if speech ended
+ * within the last 1000ms. Used by STT to prevent acoustic loopback.
+ */
+export function isSpeakingOrRecentEcho(): boolean {
+  if (speaking.value) return true
+  if (Date.now() - ttsEndedAt < 1000) return true
+  return false
+}
+
+let currentFormat: 'mpeg' | 'opus' | 'web-speech' = 'mpeg'
 let mediaSource: MediaSource | null = null
 let sourceBuffer: SourceBuffer | null = null
 let audioElement: HTMLAudioElement | null = null
@@ -33,6 +44,18 @@ function base64ToUint8Array(base64: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i)
   }
   return bytes
+}
+
+async function applySpeakerSink(element: HTMLAudioElement) {
+  try {
+    const config = await api.settings.getConfig.query()
+    const deviceId = config.tts.speakerDeviceId
+    if (deviceId && 'setSinkId' in element) {
+      await (element as any).setSinkId(deviceId)
+    }
+  } catch (err) {
+    console.warn('[useTTS] Failed to set speaker sinkId:', err)
+  }
 }
 
 // ── MSE pipeline (for mpeg streaming) ──
@@ -68,6 +91,7 @@ function resetMSE() {
   // Create fresh MediaSource
   mediaSource = new MediaSource()
   audioElement = audioElement || new Audio()
+  applySpeakerSink(audioElement)
   audioElement.src = URL.createObjectURL(mediaSource)
 
   mediaSource.addEventListener('sourceopen', () => {
@@ -84,8 +108,15 @@ function resetMSE() {
       flushPendingChunks()
 
       // Start playback
+      audioElement?.addEventListener('ended', () => {
+        speaking.value = false
+        ttsEndedAt = Date.now()
+      }, { once: true })
+
       audioElement?.play().catch((err) => {
         console.warn('[useTTS] Playback failed:', err)
+        speaking.value = false
+        ttsEndedAt = Date.now()
       })
     } catch (err) {
       console.error('[useTTS] Failed to create SourceBuffer:', err)
@@ -167,6 +198,7 @@ function endStreamBlob() {
   const url = URL.createObjectURL(blob)
 
   if (!audioElement) audioElement = new Audio()
+  applySpeakerSink(audioElement)
   audioElement.src = url
   audioElement.play().catch((err) => {
     console.warn('[useTTS] Blob playback failed:', err)
@@ -175,6 +207,8 @@ function endStreamBlob() {
   // Clean up blob URL when done
   audioElement.addEventListener('ended', () => {
     URL.revokeObjectURL(url)
+    speaking.value = false
+    ttsEndedAt = Date.now()
   }, { once: true })
 
   blobChunks = []
@@ -188,8 +222,15 @@ function initSubscriptions() {
 
   // TTS format (tells us which playback pipeline to use)
   api.audio.onTTSFormat.subscribe(undefined, {
-    onData(data: { format: 'mpeg' | 'opus' }) {
+    onData(data: { format: 'mpeg' | 'opus' | 'web-speech' }) {
       currentFormat = data.format
+    },
+  })
+
+  // Web Speech text synthesis (browser native)
+  api.audio.onTTSText.subscribe(undefined, {
+    onData(data: { text: string; voice?: string; rate?: number; pitch?: number }) {
+      playWebSpeech(data.text, data)
     },
   })
 
@@ -197,12 +238,15 @@ function initSubscriptions() {
   api.audio.onTTSStatus.subscribe(undefined, {
     onData(data: { speaking: boolean }) {
       speaking.value = data.speaking
+      if (!data.speaking) {
+        ttsEndedAt = Date.now()
+      }
 
       if (data.speaking) {
         // New speech session — prepare playback pipeline
         if (currentFormat === 'opus') {
           resetBlob()
-        } else {
+        } else if (currentFormat === 'mpeg') {
           resetMSE()
         }
       }
@@ -218,7 +262,7 @@ function initSubscriptions() {
         } else {
           addChunkBlob(data.data)
         }
-      } else {
+      } else if (currentFormat === 'mpeg') {
         if (data.done) {
           endStreamMSE()
         } else {
@@ -229,8 +273,64 @@ function initSubscriptions() {
   })
 }
 
+/** Play speech using the browser's built-in Web Speech API */
+export function playWebSpeech(
+  text: string,
+  options?: { voice?: string; rate?: number; pitch?: number },
+) {
+  if (!('speechSynthesis' in window)) return
+  window.speechSynthesis.cancel()
+
+  const utterance = new SpeechSynthesisUtterance(text)
+  if (options?.rate) utterance.rate = Math.max(0.5, Math.min(2.0, options.rate))
+  if (options?.pitch) utterance.pitch = Math.max(0.5, Math.min(1.5, options.pitch))
+
+  const voices = window.speechSynthesis.getVoices()
+  if (options?.voice) {
+    const matched = voices.find((v) => v.name === options.voice || v.voiceURI === options.voice)
+    if (matched) utterance.voice = matched
+  } else {
+    // Pick an English or system voice
+    const enVoice = voices.find((v) => v.lang.startsWith('en'))
+    if (enVoice) utterance.voice = enVoice
+  }
+
+  speaking.value = true
+  utterance.onstart = () => {
+    speaking.value = true
+  }
+  utterance.onend = () => {
+    speaking.value = false
+    ttsEndedAt = Date.now()
+  }
+  utterance.onerror = () => {
+    speaking.value = false
+    ttsEndedAt = Date.now()
+  }
+
+  // Failsafe auto-reset in case Chromium pauses or fails to emit onend on long texts
+  const estimatedSeconds = Math.max(3, Math.min(25, (text.split(/\s+/).length / 2.2) + 2))
+  setTimeout(() => {
+    if (speaking.value) {
+      speaking.value = false
+      ttsEndedAt = Date.now()
+    }
+  }, estimatedSeconds * 1000)
+
+  window.speechSynthesis.speak(utterance)
+}
+
 /** Stop frontend audio playback immediately (call from outside useTTS, e.g. useResponse) */
 export function stopPlayback() {
+  // Cancel Web Speech API
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel()
+    } catch {
+      // ignore
+    }
+  }
+
   // Clear pending chunks so nothing new gets appended
   pendingChunks = []
   blobChunks = []
@@ -254,6 +354,8 @@ export function stopPlayback() {
     audioElement.removeAttribute('src')
     audioElement.load()
   }
+  speaking.value = false
+  ttsEndedAt = Date.now()
 }
 
 export function useTTS() {
@@ -268,5 +370,6 @@ export function useTTS() {
   return {
     speaking,
     stop,
+    playWebSpeech,
   }
 }

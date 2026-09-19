@@ -32,10 +32,18 @@ const SOUNDS = {
 
 type SoundName = keyof typeof SOUNDS
 
+import { api } from '@/api'
+
 // ── Singleton State ──
 
 let volume = 0.5
+let currentSpeakerId = ''
 const audioCache = new Map<SoundName, HTMLAudioElement>()
+
+// Sync speaker ID from config
+api.settings.getConfig.query().then((cfg) => {
+  currentSpeakerId = cfg.tts.speakerDeviceId || ''
+}).catch(() => {})
 
 /**
  * Preload a sound into cache for instant playback.
@@ -54,10 +62,14 @@ function preload(name: SoundName): HTMLAudioElement {
  * Play a sound by name.
  * Creates a fresh clone each time so overlapping plays work.
  */
-function play(name: SoundName) {
+function play(name: SoundName, targetSpeakerId?: string) {
   const source = preload(name)
   const clone = source.cloneNode() as HTMLAudioElement
   clone.volume = volume
+  const sink = targetSpeakerId ?? currentSpeakerId
+  if (sink && 'setSinkId' in clone) {
+    (clone as any).setSinkId(sink).catch(() => {})
+  }
   clone.play().catch(() => {
     // Autoplay blocked — silently ignore
   })
@@ -113,5 +125,15 @@ export function useSounds() {
 
     /** Play any sound by name */
     play,
+
+    /** Set active speaker device ID */
+    setSpeakerId(id: string) {
+      currentSpeakerId = id
+    },
+
+    /** Play test chime through specified or active speaker device */
+    playTest(sinkId?: string) {
+      play('responseReady', sinkId)
+    },
   }
 }

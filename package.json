@@ -1,5 +1,5 @@
 {
-  "name": "atlas",
+  "name": "eva-01",
   "description": "An AI-powered computer-use agent built with Electron.",
   "type": "module",
   "version": "0.2.3",
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dortanes/atlas.git"
+    "url": "git+https://github.com/dortanes/eva-01.git"
   },
   "os": [
     "win32",
@@ -46,6 +46,7 @@
     "@trpc/client": "10.45.0",
     "@trpc/server": "10.45.0",
     "@vitejs/plugin-vue-jsx": "^5.0.1",
+    "@xenova/transformers": "^2.17.2",
     "cheerio": "^1.2.0",
     "daisyui": "5",
     "electron-trpc": "0.7.1",

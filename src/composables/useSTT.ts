@@ -2,7 +2,8 @@ import { ref, computed } from 'vue'
 import { api } from '@/api'
 import { useAgent } from './useAgent'
 import { usePersonas } from './usePersonas'
-import { stopPlayback } from './useTTS'
+import { useSounds } from './useSounds'
+import { stopPlayback, isSpeakingOrRecentEcho } from './useTTS'
 
 /**
  * useSTT — voice-first speech-to-text composable.
@@ -12,7 +13,7 @@ import { stopPlayback } from './useTTS'
  * 2. Detects wake word (persona name) in transcript
  * 3. Atlas window appears → ListeningIsland shows animated transcript
  * 4. Silence timer auto-submits command after ~1.5s pause
- * 5. Mic mutes during TTS playback (no feedback loop)
+ * 5. Mic drops audio during TTS playback + echo window (no feedback loop)
  * 6. Tray/hotkey opens → auto-activate listening (no wake word needed)
  * 7. Wake word during TTS → interrupt + new command
  */
@@ -38,9 +39,14 @@ let silenceTimer: ReturnType<typeof setTimeout> | null = null
 let ttsSpeaking = false
 let lastSubmitTime = 0
 let lastSubmitText = ''
+let recordedBuffers: Float32Array[] = []
+let preRollBuffers: Float32Array[] = []
+let preRollSamples = 0
+const MAX_PRE_ROLL_SAMPLES = 16000 * 2 // 2.0s rolling buffer
 
-const SILENCE_BASE = 700
-const SILENCE_MAX = 1500
+// Low-latency silence thresholds: 450ms base, 750ms max for snappy voice response
+const SILENCE_BASE = 450
+const SILENCE_MAX = 750
 
 // ── TTS coordination ──
 
@@ -58,7 +64,7 @@ function initTTSWatch() {
   })
 }
 
-// ── Visibility: auto-activate when Atlas shown via tray/hotkey ──
+// ── Visibility: auto-activate when EVA-01 shown via tray/hotkey ──
 
 let visibilitySubscribed = false
 
@@ -72,14 +78,15 @@ function initVisibilityWatch() {
       // Skip the initial `true` emitted on subscription connect
       if (isFirst) { isFirst = false; return }
 
-      if (visible && phase.value === 'idle') {
-        activateWithoutWakeWord()
-      } else if (!visible && (phase.value === 'activated' || phase.value === 'listening')) {
+      if (!visible && (phase.value === 'activated' || phase.value === 'listening')) {
         // Agent hidden — cancel active listening, return to wake word mode
         clearSilenceTimer()
         phase.value = 'idle'
         transcript.value = ''
         chunks.value = []
+        recordedBuffers = []
+        preRollBuffers = []
+        preRollSamples = 0
         api.audio.stopListening.mutate()
         console.info('[useSTT] Deactivated — agent hidden')
       }
@@ -91,11 +98,42 @@ function activateWithoutWakeWord(): void {
   phase.value = 'activated'
   transcript.value = ''
   chunks.value = []
+  recordedBuffers = [...preRollBuffers]
+  preRollBuffers = []
+  preRollSamples = 0
   api.audio.startListening.mutate()
   console.info('[useSTT] Activated via tray/hotkey')
 }
 
+// ── Mic Hotkey: Toggle mic listening via global keyboard shortcut ──
+
+let micHotkeySubscribed = false
+
+function initMicHotkeyWatch(): void {
+  if (micHotkeySubscribed) return
+  micHotkeySubscribed = true
+
+  api.system.onToggleMicHotkey.subscribe(undefined, {
+    onData() {
+      if (phase.value === 'activated' || phase.value === 'listening') {
+        clearSilenceTimer()
+        phase.value = 'idle'
+        transcript.value = ''
+        chunks.value = []
+        recordedBuffers = []
+        api.audio.stopListening.mutate()
+        console.info('[useSTT] Deactivated via mic hotkey')
+      } else {
+        api.system.showWindow.mutate().catch(() => {})
+        activateWithoutWakeWord()
+        console.info('[useSTT] Activated via mic hotkey')
+      }
+    },
+  })
+}
+
 initTTSWatch()
+initMicHotkeyWatch()
 
 // ── Model ──
 
@@ -131,16 +169,32 @@ async function startMic(): Promise<void> {
   recognizer.on('result', onResult)
   recognizer.on('partialresult', onPartialResult)
 
+  const cfg = await api.settings.getConfig.query()
+  if (cfg.stt.wakeWord) customWakeWord.value = cfg.stt.wakeWord
+  const micDeviceId = cfg.stt.micDeviceId && cfg.stt.micDeviceId !== 'default' ? cfg.stt.micDeviceId : ''
+
   mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      sampleRate: { ideal: sampleRate },
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-    },
+    audio: micDeviceId
+      ? {
+          deviceId: { exact: micDeviceId },
+          sampleRate: { ideal: sampleRate },
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      : {
+          sampleRate: { ideal: sampleRate },
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
   })
 
   audioContext = new AudioContext({ sampleRate })
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume()
+  }
+
   sourceNode = audioContext.createMediaStreamSource(mediaStream)
 
   // Use AudioWorklet if available (off-main-thread), fallback to ScriptProcessor
@@ -148,11 +202,22 @@ async function startMic(): Promise<void> {
   const workletNode = new AudioWorkletNode(audioContext, 'stt-processor')
   workletNode.port.onmessage = (e) => {
     if (!recognizer) return
-    // During TTS: only process audio for wake word detection (idle phase)
-    // Skip feeding audio when actively listening to avoid TTS echo
-    if (ttsSpeaking && phase.value !== 'idle') return
-
     const samples = e.data as Float32Array
+
+    // Maintain a rolling 2-second buffer during idle so audio spoken before/during
+    // wake-word detection is preserved for high-accuracy Whisper transcription.
+    if (phase.value === 'idle') {
+      preRollBuffers.push(new Float32Array(samples))
+      preRollSamples += samples.length
+      while (preRollSamples > MAX_PRE_ROLL_SAMPLES && preRollBuffers.length > 1) {
+        const dropped = preRollBuffers.shift()!
+        preRollSamples -= dropped.length
+      }
+    } else if (phase.value === 'activated' || phase.value === 'listening') {
+      // Record audio samples when actively listening for Whisper offline flow
+      recordedBuffers.push(new Float32Array(samples))
+    }
+
     const buf = audioContext!.createBuffer(1, samples.length, sampleRate)
     buf.getChannelData(0).set(samples)
     recognizer.acceptWaveform(buf)
@@ -162,6 +227,7 @@ async function startMic(): Promise<void> {
 
   phase.value = 'idle'
   initVisibilityWatch()
+  initConfigWatch()
   console.info('[useSTT] Mic started, listening for wake word...')
 }
 
@@ -178,6 +244,32 @@ function stopMic(): void {
   phase.value = 'off'
   transcript.value = ''
   chunks.value = []
+  recordedBuffers = []
+  preRollBuffers = []
+  preRollSamples = 0
+}
+
+// ── Config Watch: auto-enable/disable and update wake word ──
+
+let configSubscribed = false
+const customWakeWord = ref('eva-01')
+
+function initConfigWatch(): void {
+  if (configSubscribed) return
+  configSubscribed = true
+
+  api.settings.onConfigChange.subscribe(undefined, {
+    onData(cfg) {
+      if (cfg.stt.wakeWord) {
+        customWakeWord.value = cfg.stt.wakeWord
+      }
+      if (cfg.stt.enabled && phase.value === 'off') {
+        enable()
+      } else if (!cfg.stt.enabled && phase.value !== 'off') {
+        disable()
+      }
+    },
+  })
 }
 
 // ── AudioWorklet (inlined as blob) ──
@@ -198,12 +290,90 @@ function createWorkletBlob(): string {
   return URL.createObjectURL(new Blob([code], { type: 'application/javascript' }))
 }
 
+// ── WAV encoder for offline Whisper flow ──
+
+function encodeWAV(buffers: Float32Array[], sampleRate: number): string {
+  const totalLength = buffers.reduce((acc, b) => acc + b.length, 0)
+  const buffer = new ArrayBuffer(44 + totalLength * 2)
+  const view = new DataView(buffer)
+
+  // RIFF header
+  view.setUint32(0, 0x52494646, false) // 'RIFF'
+  view.setUint32(4, 36 + totalLength * 2, true)
+  view.setUint32(8, 0x57415645, false) // 'WAVE'
+  view.setUint32(12, 0x666d7420, false) // 'fmt '
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM format
+  view.setUint16(22, 1, true) // Mono
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true) // byte rate
+  view.setUint16(32, 2, true) // block align
+  view.setUint16(34, 16, true) // 16 bits per sample
+  view.setUint32(36, 0x64617461, false) // 'data'
+  view.setUint32(40, totalLength * 2, true)
+
+  let offset = 44
+  for (const buf of buffers) {
+    for (let i = 0; i < buf.length; i++, offset += 2) {
+      const s = Math.max(-1, Math.min(1, buf[i]))
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+    }
+  }
+
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
 // ── Wake word + transcript handling ──
 
-function getWakeWord(): string {
+function getWakeWords(): string[] {
   const { activePersona } = usePersonas()
-  const name = (activePersona.value?.name || 'atlas').toLowerCase()
-  return name
+  const personaName = (activePersona.value?.name || 'eva-01').toLowerCase().trim()
+  const configured = (customWakeWord.value || 'eva-01').toLowerCase().trim()
+
+  const words = new Set<string>()
+  if (configured) {
+    words.add(configured)
+    if (configured.includes('eva')) {
+      words.add('eva')
+      words.add('eva-01')
+      words.add('eva 01')
+      words.add('eva one')
+      // Phonetic variants that speech models frequently output for "eva":
+      words.add('ever')
+      words.add('ava')
+      words.add('iva')
+      words.add('eeva')
+      words.add('ayva')
+      words.add('eyva')
+      words.add('ifa')
+    }
+  }
+  if (personaName) {
+    words.add(personaName)
+    if (personaName.includes('eva')) {
+      words.add('eva')
+      words.add('eva-01')
+      words.add('eva 01')
+      words.add('eva one')
+      words.add('ever')
+      words.add('ava')
+      words.add('iva')
+    }
+  }
+  // Backwards compatibility alias
+  words.add('atlas')
+
+  return Array.from(words)
+}
+
+function containsWakeWord(text: string): boolean {
+  const lower = text.toLowerCase()
+  return getWakeWords().some((w) => lower.includes(w))
 }
 
 function onPartialResult(msg: any): void {
@@ -214,7 +384,7 @@ function onPartialResult(msg: any): void {
   if (Date.now() - lastSubmitTime < 500) return
 
   if (phase.value === 'idle') {
-    if (partial.toLowerCase().includes(getWakeWord())) {
+    if (containsWakeWord(partial)) {
       activate(partial)
     }
   } else if (phase.value === 'activated' || phase.value === 'listening') {
@@ -235,7 +405,7 @@ function onResult(msg: any): void {
   if (Date.now() - lastSubmitTime < 500) return
 
   if (phase.value === 'idle') {
-    if (text.toLowerCase().includes(getWakeWord())) {
+    if (containsWakeWord(text)) {
       activate(text)
     }
   } else if (phase.value === 'activated' || phase.value === 'listening') {
@@ -250,17 +420,28 @@ function onResult(msg: any): void {
 }
 
 function activate(initialText: string): void {
-  // Always stop TTS on interrupt — backend may have finished streaming
-  // while frontend is still playing the audio blob
+  // Always stop TTS on interrupt
   stopPlayback()
   api.audio.stopSpeaking.mutate().catch(() => {})
   ttsSpeaking = false
 
+  // Play instant wake chime for 0-latency auditory confirmation
+  try {
+    useSounds().activate()
+  } catch {
+    // Audio context may not be ready
+  }
+
   phase.value = 'activated'
   transcript.value = ''
   chunks.value = []
+  
+  // Seed recordedBuffers with pre-roll audio so Whisper receives the complete utterance
+  recordedBuffers = [...preRollBuffers]
+  preRollBuffers = []
+  preRollSamples = 0
 
-  // Show Atlas window
+  // Show EVA-01 window
   api.system.showWindow.mutate().catch(() => {})
   api.audio.startListening.mutate()
 
@@ -269,21 +450,29 @@ function activate(initialText: string): void {
   if (afterWake) {
     phase.value = 'listening'
     transcript.value = afterWake
+    chunks.value = [afterWake]
     resetSilenceTimer()
   }
-  // If afterWake is empty → don't start timer, wait for actual speech
 
-  console.info('[useSTT] Wake word detected — activated')
+  console.info('[useSTT] Wake word detected — activated, command:', afterWake)
 }
 
 function stripWakeWord(text: string): string {
-  const wake = getWakeWord()
-  const lower = text.toLowerCase()
-  const idx = lower.indexOf(wake)
-  if (idx >= 0) {
-    return text.slice(idx + wake.length).trim()
+  let cleaned = text.trim()
+  const lower = cleaned.toLowerCase()
+  // Match longest wake word phrase first (e.g. "eva-01" before "eva")
+  const sorted = [...getWakeWords()].sort((a, b) => b.length - a.length)
+  for (const wake of sorted) {
+    const idx = lower.indexOf(wake)
+    if (idx >= 0) {
+      cleaned = cleaned.slice(idx + wake.length)
+      break
+    }
   }
-  return text
+  // Strip leading punctuation and conversational hesitations / filler words like "ah", "um", "uh", "hey", "hi"
+  cleaned = cleaned.replace(/^[,.:;!?-]+/, '').trim()
+  cleaned = cleaned.replace(/^(ah|um|uh|er|eh|hey|hi|yo)\s+/i, '').trim()
+  return cleaned
 }
 
 // ── Silence timer → auto-submit ──
@@ -293,7 +482,9 @@ function resetSilenceTimer(): void {
   // Dynamic timeout: short text → more patience, long text → quicker submit
   const wordCount = chunks.value.join(' ').split(/\s+/).length + transcript.value.split(/\s+/).length
   const timeout = wordCount <= 2 ? SILENCE_MAX : SILENCE_BASE
-  silenceTimer = setTimeout(submitTranscript, timeout)
+  silenceTimer = setTimeout(() => {
+    submitTranscript()
+  }, timeout)
 }
 
 function clearSilenceTimer(): void {
@@ -303,8 +494,55 @@ function clearSilenceTimer(): void {
   }
 }
 
-function submitTranscript(): void {
-  const fullText = chunks.value.join(' ').trim()
+async function submitTranscript(): Promise<void> {
+  const allParts = [...chunks.value]
+  const currentPartial = transcript.value.trim()
+  if (currentPartial && !allParts.includes(currentPartial)) {
+    allParts.push(currentPartial)
+  }
+  const voskFallback = allParts.join(' ').trim()
+  let fullText = voskFallback
+
+  // If Whisper, Hybrid, or In-App Whisper mode is enabled and audio was recorded
+  try {
+    const config = await api.settings.getConfig.query()
+    const isWhisperFlow =
+      config.stt.provider === 'whisper' ||
+      config.stt.provider === 'hybrid' ||
+      config.stt.provider === 'in-app-whisper'
+
+    if (isWhisperFlow && recordedBuffers.length > 0) {
+      console.info('[useSTT] Running Whisper transcription with', recordedBuffers.length, 'audio chunks...')
+      const wavBase64 = encodeWAV(recordedBuffers, 16000)
+      const res = await api.audio.transcribeAudio.mutate({
+        audioBase64: wavBase64,
+        language: config.stt.language !== 'auto' ? config.stt.language : undefined,
+      })
+      if (res.text && res.text.trim()) {
+        const whisperClean = stripWakeWord(res.text).trim() || res.text.trim()
+        if (whisperClean) {
+          fullText = whisperClean
+          console.info('[useSTT] Whisper recognized:', fullText)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[useSTT] Whisper transcription error, fallback to Vosk text:', err)
+  }
+
+  recordedBuffers = []
+  preRollBuffers = []
+  preRollSamples = 0
+
+  // If Whisper returned empty, use Vosk candidate
+  if (!fullText && voskFallback) {
+    fullText = voskFallback
+  }
+  if (!fullText) return
+
+  // Clean any leading punctuation or conversational filler ("ah", "um", "uh", "hey")
+  fullText = stripWakeWord(fullText)
+  fullText = fullText.replace(/^[,.:;!?-]+/, '').replace(/^(ah|um|uh|er|eh|hey|hi|yo)\s+/i, '').trim()
   if (!fullText) return
 
   // Guard: prevent duplicate submissions
@@ -314,6 +552,11 @@ function submitTranscript(): void {
   lastSubmitText = fullText
 
   console.info('[useSTT] Auto-submit:', fullText)
+  try {
+    useSounds().processing()
+  } catch {
+    // Ignored
+  }
   const { sendCommand } = useAgent()
   sendCommand(fullText)
 
@@ -351,6 +594,7 @@ export function useSTT() {
     isActivated,
     isModelLoaded,
     isModelLoading,
+    activeWakeWord: customWakeWord,
     enable,
     disable,
   }

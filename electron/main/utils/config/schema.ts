@@ -17,6 +17,8 @@ export type DeepPartial<T> = {
 export interface UIConfig {
   /** Which side of the screen the UI stack appears on */
   positionSide: 'left' | 'right' | 'center'
+  /** Keep window always on top of other apps when shown */
+  alwaysOnTop?: boolean
   /** Open DevTools automatically in dev mode */
   openDevTools: boolean
   /** Minimum log level */
@@ -40,6 +42,8 @@ export interface LLMConfig {
   textModel: string
   /** Vision model (screenshot analysis) */
   visionModel: string
+  /** Whether to use a separate Vision model (if false, textModel handles both) */
+  separateVisionModel?: boolean
   /** Classifier model (intent detection, cheap) */
   classifierModel: string
 }
@@ -60,7 +64,7 @@ export interface GenerationConfig {
 }
 
 export interface TTSConfig {
-  /** TTS provider name */
+  /** TTS provider: 'elevenlabs' | 'yandex-alice' | 'web-speech' | 'google-translate' */
   provider: string
   /** TTS API key (e.g. ElevenLabs) */
   apiKey: string
@@ -70,6 +74,16 @@ export interface TTSConfig {
   model: string
   /** Whether TTS is enabled */
   enabled: boolean
+  /** Audio output device ID (empty string = system default) */
+  speakerDeviceId: string
+  /** Speech rate/speed multiplier (0.8 to 1.5, default: 1.0) */
+  rate?: number
+  /** Speech pitch multiplier (0.8 to 1.3, default: 1.0) */
+  pitch?: number
+  /** Speech personality tone/manner: 'balanced' | 'concise' | 'expressive' | 'pilot' | 'formal' */
+  style?: string
+  /** Accent / Regional language code for TTS (e.g. 'en-US', 'en-GB', 'en-IN', 'en-AU') */
+  accent?: string
 }
 
 export interface AgentConfig {
@@ -100,8 +114,24 @@ export interface AgentConfig {
 export interface STTConfig {
   /** Whether STT is enabled */
   enabled: boolean
+  /** STT Engine / Flow: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk' */
+  provider: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
   /** Language code for model selection (e.g. 'en', 'ru') */
   language: string
+  /** Audio input device ID (empty string = system default) */
+  micDeviceId: string
+  /** Wake word used to trigger listening (default: 'eva-01') */
+  wakeWord: string
+  /** Global keyboard shortcut to toggle microphone listening (e.g. 'Ctrl+Shift+Space') */
+  micHotkey?: string
+  /** Endpoint for offline Whisper service (e.g. http://localhost:8080/v1 or http://localhost:8000/v1) */
+  whisperEndpoint: string
+  /** Optional API key for cloud Whisper services (OpenAI, Groq, custom) */
+  whisperApiKey?: string
+  /** Whisper model name (e.g. 'whisper-1', 'base', 'tiny') */
+  whisperModel: string
+  /** In-app embedded Whisper model from HuggingFace (e.g. 'Xenova/whisper-base.en') */
+  inAppWhisperModel?: string
 }
 
 // ═══════════════════════════════════════════════════════════════

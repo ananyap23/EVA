@@ -12,11 +12,13 @@ import { VisionService } from './services/vision/VisionService'
 import { MotorService } from './services/motor/MotorService'
 import { SearchService } from './services/search/SearchService'
 import { STTService } from './services/stt/STTService'
+import { GPUService } from './services/gpu/GPUService'
 import { setPersonaService } from './api/routers/personas.router'
 import { setMemoryService } from './api/routers/memory.router'
 import { setFactService } from './api/routers/facts.router'
 import { setAgentService } from './api/routers/agent.router'
 import { setSTTService } from './api/routers/audio.router'
+import { setGPUService } from './api/routers/system.router'
 import { createLogger } from './utils/logger'
 import { loadConfig } from './utils/config'
 import { mainEventBus } from './utils/eventBus'
@@ -28,9 +30,14 @@ import './utils/paths'
 
 const log = createLogger('Main')
 
+// ── Hardware Acceleration & GPU Flags ──
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
+
 // ── Platform Setup ──
 
-if (process.platform === 'win32') app.setAppUserModelId('com.dortanes.atlas')
+if (process.platform === 'win32') app.setAppUserModelId('com.dortanes.eva01')
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -49,7 +56,7 @@ const services = new ServiceRegistry()
 // ── App Lifecycle ──
 
 app.whenReady().then(async () => {
-  log.info('Atlas starting...')
+  log.info('EVA-01 starting...')
 
   loadConfig()
 
@@ -86,7 +93,10 @@ app.whenReady().then(async () => {
   services.register('vision', vision)
   services.register('motor', motor)
   services.register('search', searchService)
-  services.register('stt', stt)
+  const gpuService = new GPUService()
+  services.register('gpu', gpuService)
+  setGPUService(gpuService)
+
   const agent = new AgentService(intelligence, persona, memory, facts, vision, motor, searchService)
   services.register('agent', agent)
   services.register('hotkey', new HotkeyService())
@@ -102,10 +112,14 @@ app.whenReady().then(async () => {
   await createWindow()
   createTray(persona)
 
+  // Asynchronously pre-warm in-app Whisper pipeline for 0 cold-start latency
+  stt.prewarm().catch((err) => log.warn('STT pre-warm warning:', err))
+
   // Global hotkey → toggle window visibility
+  mainEventBus.on('hotkey:toggle-eva-01', () => toggleWindow())
   mainEventBus.on('hotkey:toggle-atlas', () => toggleWindow())
 
-  log.info('Atlas ready')
+  log.info('EVA-01 ready')
 })
 
 app.on('window-all-closed', () => {

@@ -10,6 +10,7 @@ import { api } from '@/api'
 
 export interface UIConfig {
   positionSide: 'left' | 'right' | 'center'
+  alwaysOnTop?: boolean
   openDevTools: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   debugLog: boolean
@@ -23,6 +24,7 @@ export interface LLMConfig {
   apiKey: string
   textModel: string
   visionModel: string
+  separateVisionModel?: boolean
   classifierModel: string
 }
 
@@ -41,11 +43,24 @@ export interface TTSConfig {
   voiceId: string
   model: string
   enabled: boolean
+  speakerDeviceId: string
+  rate?: number
+  pitch?: number
+  style?: string
+  accent?: string
 }
 
 export interface STTConfig {
   enabled: boolean
+  provider: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
   language: string
+  micDeviceId: string
+  wakeWord: string
+  whisperEndpoint: string
+  whisperModel: string
+  whisperApiKey?: string
+  inAppWhisperModel?: string
+  micHotkey?: string
 }
 
 export interface AgentConfig {
@@ -74,6 +89,7 @@ export function useSettings() {
   const config = reactive<AppConfig>({
     ui: {
       positionSide: 'right',
+      alwaysOnTop: true,
       openDevTools: false,
       logLevel: 'debug',
       debugLog: false,
@@ -86,6 +102,7 @@ export function useSettings() {
       apiKey: '',
       textModel: '',
       visionModel: '',
+      separateVisionModel: false,
       classifierModel: '',
     },
     generation: {
@@ -102,10 +119,20 @@ export function useSettings() {
       voiceId: '',
       model: '',
       enabled: true,
+      speakerDeviceId: '',
+      rate: 1.0,
+      pitch: 1.0,
+      style: 'balanced',
     },
     stt: {
-      enabled: false,
+      enabled: true,
+      provider: 'hybrid',
       language: 'en',
+      micDeviceId: '',
+      wakeWord: 'eva-01',
+      whisperEndpoint: 'http://localhost:8080/v1',
+      whisperModel: 'whisper-1',
+      inAppWhisperModel: 'Xenova/whisper-tiny.en',
     },
     agent: {
       maxIterations: 15,
@@ -118,7 +145,7 @@ export function useSettings() {
       screenshotQuality: 80,
     },
     hotkey: 'Ctrl+Space',
-    activePersonaId: 'atlas-default',
+    activePersonaId: 'eva-01-default',
   })
 
   const loading = ref(false)

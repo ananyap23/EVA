@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { exec, type ChildProcess } from 'node:child_process'
 import { createLogger } from '@electron/utils/logger'
 
 const log = createLogger('ShellController')
@@ -25,6 +25,8 @@ export interface ShellResult {
  * All commands run in PowerShell with UTF-8 encoding and a 30s timeout.
  */
 export class ShellController {
+  private currentChildProcess: ChildProcess | null = null
+
   /**
    * Execute a PowerShell command and return its output.
    */
@@ -35,7 +37,7 @@ export class ShellController {
     log.info(`exec: ${patched}`)
 
     return new Promise((resolve) => {
-      exec(
+      const child = exec(
         patched,
         {
           shell: 'powershell.exe',
@@ -44,6 +46,9 @@ export class ShellController {
           windowsHide: true,
         },
         (error, stdout, stderr) => {
+          if (this.currentChildProcess === child) {
+            this.currentChildProcess = null
+          }
           const exitCode = error?.code ?? (error ? 1 : 0)
           const result: ShellResult = {
             stdout: (stdout ?? '').trim(),
@@ -60,7 +65,30 @@ export class ShellController {
           resolve(result)
         },
       )
+      this.currentChildProcess = child
     })
+  }
+
+  /**
+   * Kill any currently executing PowerShell child process immediately.
+   */
+  killRunningProcess(): void {
+    if (this.currentChildProcess && this.currentChildProcess.pid) {
+      const pid = this.currentChildProcess.pid
+      log.info(`Terminating running shell process (PID: ${pid})`)
+      try {
+        if (process.platform === 'win32') {
+          exec(`taskkill /pid ${pid} /T /F`, (err) => {
+            if (err) log.warn(`taskkill warning: ${err.message}`)
+          })
+        } else {
+          this.currentChildProcess.kill('SIGKILL')
+        }
+      } catch (err) {
+        log.warn('Failed to kill running shell process:', err)
+      }
+      this.currentChildProcess = null
+    }
   }
 
   /**

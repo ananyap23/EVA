@@ -11,7 +11,8 @@ import type { AppConfig } from './schema'
 export const defaultConfig: AppConfig = {
   ui: {
     positionSide: 'right',
-    openDevTools: !app.isPackaged,
+    alwaysOnTop: true,
+    openDevTools: false,
     logLevel: 'debug',
     debugLog: false,
     soundEnabled: true,
@@ -23,6 +24,7 @@ export const defaultConfig: AppConfig = {
     apiKey: '',
     textModel: 'gemini-3.1-flash-lite-preview',
     visionModel: '',
+    separateVisionModel: false,
     classifierModel: '',
   },
   generation: {
@@ -39,10 +41,23 @@ export const defaultConfig: AppConfig = {
     voiceId: 'JBFqnCBsd6RMkjVDRZzb',
     model: 'eleven_flash_v2_5',
     enabled: true,
+    speakerDeviceId: '',
+    rate: 1.0,
+    pitch: 1.0,
+    style: 'balanced',
+    accent: 'en-US',
   },
   stt: {
-    enabled: false,
+    enabled: true,
+    provider: 'hybrid',
     language: 'en',
+    micDeviceId: '',
+    wakeWord: 'eva-01',
+    micHotkey: 'Ctrl+Shift+Space',
+    whisperEndpoint: 'http://localhost:8080/v1',
+    whisperApiKey: '',
+    whisperModel: 'whisper-1',
+    inAppWhisperModel: 'Xenova/whisper-base.en',
   },
   agent: {
     maxIterations: 15,
@@ -58,5 +73,5 @@ export const defaultConfig: AppConfig = {
     streamChunkDelay: 30,
   },
   hotkey: 'Ctrl+Space',
-  activePersonaId: 'atlas-default',
+  activePersonaId: 'eva-01-default',
 }

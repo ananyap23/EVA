@@ -19,6 +19,8 @@ export default defineComponent({
     },
   },
 
+  emits: ['terminate'],
+
   render() {
     const step = Math.max(1, Math.round((this.action.progress / 100) * 15))
 
@@ -28,6 +30,16 @@ export default defineComponent({
           <span class="island__icon">bolt</span>
           <span class="island__title">Performing Action</span>
           <span class="island__step-counter">Step {step}</span>
+
+          <button
+            type="button"
+            class="island__terminate-btn"
+            title="Terminate running action (Esc)"
+            onClick={() => this.$emit('terminate')}
+          >
+            <span class="island__terminate-icon">stop_circle</span>
+            <span>Stop</span>
+          </button>
         </div>
 
         <div class="island__body">

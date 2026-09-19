@@ -138,8 +138,9 @@ export class MotorService extends BaseService {
           break
 
         case 'runCommand': {
-          if (!action.command) throw new Error('runCommand action requires command')
-          const shellResult = await this.shell.exec(action.command)
+          const cmd = action.command || (action as any).cmd || (action as any).code || (action as any).response
+          if (!cmd) throw new Error('runCommand action requires command')
+          const shellResult = await this.shell.exec(cmd)
           this.log.info(`Command exit code: ${shellResult.exitCode}`)
           return {
             success: shellResult.exitCode === 0,
@@ -178,6 +179,13 @@ export class MotorService extends BaseService {
       this.log.error(`Action failed: ${action.action} — ${message}`)
       return { success: false, error: message }
     }
+  }
+
+  /**
+   * Terminate any running child process in shell controller.
+   */
+  killRunningProcess(): void {
+    this.shell.killRunningProcess()
   }
 
   /**
