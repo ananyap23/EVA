@@ -23,6 +23,30 @@ import { stopPlayback, isSpeakingOrRecentEcho } from './useTTS'
 type STTPhase = 'off' | 'idle' | 'activated' | 'listening'
 
 const phase = ref<STTPhase>('off')
+// ── Settings Open Guard (prevents wake-word & listening while in settings) ──
+const isSettingsOpen = ref(false)
+
+export function isSTTSettingsOpen(): boolean {
+  return isSettingsOpen.value
+}
+
+export function setSTTSettingsOpen(open: boolean): void {
+  isSettingsOpen.value = open
+  if (open) {
+    clearSilenceTimer()
+    if (phase.value === 'activated' || phase.value === 'listening') {
+      phase.value = 'idle'
+      transcript.value = ''
+      chunks.value = []
+      recordedBuffers = []
+      preRollBuffers = []
+      preRollSamples = 0
+      api.audio.stopListening.mutate().catch(() => {})
+      console.info('[useSTT] Deactivated — settings opened')
+    }
+  }
+}
+
 const transcript = ref('')
 const chunks = ref<string[]>([])
 const isModelLoaded = ref(false)
@@ -36,6 +60,8 @@ let audioContext: AudioContext | null = null
 let mediaStream: MediaStream | null = null
 let sourceNode: MediaStreamAudioSourceNode | null = null
 let silenceTimer: ReturnType<typeof setTimeout> | null = null
+let lastSeenPartial = ''
+let cachedSTTConfig: any = null
 let ttsSpeaking = false
 let lastSubmitTime = 0
 let lastSubmitText = ''
@@ -44,9 +70,9 @@ let preRollBuffers: Float32Array[] = []
 let preRollSamples = 0
 const MAX_PRE_ROLL_SAMPLES = 16000 * 2 // 2.0s rolling buffer
 
-// Low-latency silence thresholds: 450ms base, 750ms max for snappy voice response
-const SILENCE_BASE = 450
-const SILENCE_MAX = 750
+// Snappy, natural silence thresholds: 700ms base, 1100ms max for responsive turn-taking
+const SILENCE_BASE = 700
+const SILENCE_MAX = 1100
 
 // ── TTS coordination ──
 
@@ -95,6 +121,8 @@ function initVisibilityWatch() {
 }
 
 function activateWithoutWakeWord(): void {
+  if (isSettingsOpen.value) return
+  lastSeenPartial = ''
   phase.value = 'activated'
   transcript.value = ''
   chunks.value = []
@@ -115,14 +143,20 @@ function initMicHotkeyWatch(): void {
 
   api.system.onToggleMicHotkey.subscribe(undefined, {
     onData() {
-      if (phase.value === 'activated' || phase.value === 'listening') {
+      if (isSettingsOpen.value) return
+      const { state, terminateProcess } = useAgent()
+      const isAgentActive = state.value !== 'idle'
+      const isListening = phase.value === 'activated' || phase.value === 'listening'
+
+      if (isListening || isAgentActive) {
         clearSilenceTimer()
         phase.value = 'idle'
         transcript.value = ''
         chunks.value = []
         recordedBuffers = []
-        api.audio.stopListening.mutate()
-        console.info('[useSTT] Deactivated via mic hotkey')
+        api.audio.stopListening.mutate().catch(() => {})
+        terminateProcess()
+        console.info('[useSTT] Deactivated listening & cancelled active execution via mic hotkey')
       } else {
         api.system.showWindow.mutate().catch(() => {})
         activateWithoutWakeWord()
@@ -165,7 +199,7 @@ async function startMic(): Promise<void> {
 
   const sampleRate = 16000
 
-  recognizer = new model.KaldiRecognizer(sampleRate)
+  recognizer = new model.KaldiRecognizer(16000)
   recognizer.on('result', onResult)
   recognizer.on('partialresult', onPartialResult)
 
@@ -177,25 +211,41 @@ async function startMic(): Promise<void> {
     audio: micDeviceId
       ? {
           deviceId: { exact: micDeviceId },
-          sampleRate: { ideal: sampleRate },
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
         }
       : {
-          sampleRate: { ideal: sampleRate },
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
         },
   })
 
-  audioContext = new AudioContext({ sampleRate })
+  audioContext = new AudioContext()
   if (audioContext.state === 'suspended') {
     await audioContext.resume()
   }
 
+  const actualRate = audioContext.sampleRate || 16000
+
   sourceNode = audioContext.createMediaStreamSource(mediaStream)
+
+  // Helper to resample any native browser rate (44.1k/48k) to 16k for Vosk
+  function resampleTo16k(audioData: Float32Array, origRate: number): Float32Array {
+    if (origRate === 16000) return audioData
+    const ratio = origRate / 16000
+    const newLen = Math.round(audioData.length / ratio)
+    const result = new Float32Array(newLen)
+    for (let i = 0; i < newLen; i++) {
+      const origIdx = i * ratio
+      const low = Math.floor(origIdx)
+      const high = Math.min(low + 1, audioData.length - 1)
+      const weight = origIdx - low
+      result[i] = audioData[low] * (1 - weight) + audioData[high] * weight
+    }
+    return result
+  }
 
   // Use AudioWorklet if available (off-main-thread), fallback to ScriptProcessor
   await audioContext.audioWorklet.addModule(createWorkletBlob())
@@ -218,12 +268,17 @@ async function startMic(): Promise<void> {
       recordedBuffers.push(new Float32Array(samples))
     }
 
-    const buf = audioContext!.createBuffer(1, samples.length, sampleRate)
-    buf.getChannelData(0).set(samples)
+    // Vosk recognizer expects exactly 16000Hz audio
+    const samples16k = resampleTo16k(samples, actualRate)
+    const buf = audioContext!.createBuffer(1, samples16k.length, 16000)
+    buf.getChannelData(0).set(samples16k)
     recognizer.acceptWaveform(buf)
   }
   sourceNode.connect(workletNode)
-  workletNode.connect(audioContext.destination)
+  const silentGain = audioContext.createGain()
+  silentGain.gain.value = 0
+  workletNode.connect(silentGain)
+  silentGain.connect(audioContext.destination)
 
   phase.value = 'idle'
   initVisibilityWatch()
@@ -260,6 +315,7 @@ function initConfigWatch(): void {
 
   api.settings.onConfigChange.subscribe(undefined, {
     onData(cfg) {
+      cachedSTTConfig = cfg
       if (cfg.stt.wakeWord) {
         customWakeWord.value = cfg.stt.wakeWord
       }
@@ -280,7 +336,7 @@ function createWorkletBlob(): string {
       process(inputs) {
         const input = inputs[0]
         if (input && input[0] && input[0].length > 0) {
-          this.port.postMessage(input[0])
+          this.port.postMessage(new Float32Array(input[0]))
         }
         return true
       }
@@ -322,8 +378,9 @@ function encodeWAV(buffers: Float32Array[], sampleRate: number): string {
 
   const bytes = new Uint8Array(buffer)
   let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
+  const CHUNK_SZ = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK_SZ) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK_SZ)))
   }
   return btoa(binary)
 }
@@ -339,30 +396,23 @@ function getWakeWords(): string[] {
   if (configured) {
     words.add(configured)
     if (configured.includes('eva')) {
-      words.add('eva')
       words.add('eva-01')
       words.add('eva 01')
       words.add('eva one')
-      // Phonetic variants that speech models frequently output for "eva":
+      words.add('eva')
       words.add('ever')
       words.add('ava')
-      words.add('iva')
-      words.add('eeva')
-      words.add('ayva')
-      words.add('eyva')
-      words.add('ifa')
     }
   }
   if (personaName) {
     words.add(personaName)
     if (personaName.includes('eva')) {
-      words.add('eva')
       words.add('eva-01')
       words.add('eva 01')
       words.add('eva one')
+      words.add('eva')
       words.add('ever')
       words.add('ava')
-      words.add('iva')
     }
   }
   // Backwards compatibility alias
@@ -373,10 +423,14 @@ function getWakeWords(): string[] {
 
 function containsWakeWord(text: string): boolean {
   const lower = text.toLowerCase()
-  return getWakeWords().some((w) => lower.includes(w))
+  return getWakeWords().some((w) => {
+    const regex = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+    return regex.test(lower)
+  })
 }
 
 function onPartialResult(msg: any): void {
+  if (isSettingsOpen.value) return
   const partial: string = msg?.result?.partial || msg?.partial || ''
   if (!partial) return
 
@@ -392,12 +446,18 @@ function onPartialResult(msg: any): void {
     if (clean) {
       phase.value = 'listening'
       transcript.value = clean
-      resetSilenceTimer()
+      // CRITICAL: Only reset silence timer when NEW words/tokens arrive!
+      // In Vosk, identical partial results are continuously emitted while silent.
+      if (clean !== lastSeenPartial) {
+        lastSeenPartial = clean
+        resetSilenceTimer()
+      }
     }
   }
 }
 
 function onResult(msg: any): void {
+  if (isSettingsOpen.value) return
   const text: string = msg?.result?.text || msg?.text || ''
   if (!text.trim()) return
 
@@ -414,12 +474,19 @@ function onResult(msg: any): void {
       phase.value = 'listening'
       chunks.value.push(clean)
       transcript.value = ''
-      resetSilenceTimer()
+      lastSeenPartial = ''
+      // Vosk finalized this segment - rapid submit
+      clearSilenceTimer()
+      silenceTimer = setTimeout(() => {
+        submitTranscript()
+      }, 900)
     }
   }
 }
 
 function activate(initialText: string): void {
+  if (isSettingsOpen.value) return
+  lastSeenPartial = ''
   // Always stop TTS on interrupt
   stopPlayback()
   api.audio.stopSpeaking.mutate().catch(() => {})
@@ -459,16 +526,23 @@ function activate(initialText: string): void {
 
 function stripWakeWord(text: string): string {
   let cleaned = text.trim()
-  const lower = cleaned.toLowerCase()
-  // Match longest wake word phrase first (e.g. "eva-01" before "eva")
-  const sorted = [...getWakeWords()].sort((a, b) => b.length - a.length)
-  for (const wake of sorted) {
-    const idx = lower.indexOf(wake)
-    if (idx >= 0) {
-      cleaned = cleaned.slice(idx + wake.length)
-      break
-    }
+  if (!cleaned) return ''
+
+  const wakeWords = getWakeWords()
+  const escaped = wakeWords
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length)
+    .join('|')
+
+  if (escaped) {
+    // Strictly strip wake words at the BEGINNING of the utterance (optionally preceded by greetings/fillers)
+    const wakeRegex = new RegExp(
+      `^(?:(?:hey|hi|hello|ok|okay|yo|um|uh|ah|er)\\s+)*(?:${escaped})\\b[\\s,:;!?-]*`,
+      'i',
+    )
+    cleaned = cleaned.replace(wakeRegex, '').trim()
   }
+
   // Strip leading punctuation and conversational hesitations / filler words like "ah", "um", "uh", "hey", "hi"
   cleaned = cleaned.replace(/^[,.:;!?-]+/, '').trim()
   cleaned = cleaned.replace(/^(ah|um|uh|er|eh|hey|hi|yo)\s+/i, '').trim()
@@ -494,7 +568,18 @@ function clearSilenceTimer(): void {
   }
 }
 
+let isTranscribing = false
+
 async function submitTranscript(): Promise<void> {
+  if (isSettingsOpen.value || isTranscribing) return
+  isTranscribing = true
+  clearSilenceTimer()
+
+  // Drain audio buffers immediately so overlapping speech chunks cannot double-submit
+  const currentRecorded = recordedBuffers.splice(0)
+  preRollBuffers = []
+  preRollSamples = 0
+
   const allParts = [...chunks.value]
   const currentPartial = transcript.value.trim()
   if (currentPartial && !allParts.includes(currentPartial)) {
@@ -502,18 +587,23 @@ async function submitTranscript(): Promise<void> {
   }
   const voskFallback = allParts.join(' ').trim()
   let fullText = voskFallback
+  lastSeenPartial = ''
 
-  // If Whisper, Hybrid, or In-App Whisper mode is enabled and audio was recorded
+  // If Whisper or In-App Whisper mode is configured (or hybrid)
   try {
-    const config = await api.settings.getConfig.query()
+    const config = cachedSTTConfig || (await api.settings.getConfig.query())
     const isWhisperFlow =
       config.stt.provider === 'whisper' ||
+      config.stt.provider === 'in-app-whisper' ||
       config.stt.provider === 'hybrid' ||
-      config.stt.provider === 'in-app-whisper'
+      config.stt.provider === 'groq-whisper' ||
+      config.stt.provider === 'faster-whisper' ||
+      config.stt.provider === 'handy'
 
-    if (isWhisperFlow && recordedBuffers.length > 0) {
-      console.info('[useSTT] Running Whisper transcription with', recordedBuffers.length, 'audio chunks...')
-      const wavBase64 = encodeWAV(recordedBuffers, 16000)
+    if (isWhisperFlow && currentRecorded.length > 0) {
+      console.info('[useSTT] Running Whisper transcription with', currentRecorded.length, 'audio chunks...')
+      const actualSampleRate = audioContext?.sampleRate || 16000
+      const wavBase64 = encodeWAV(currentRecorded, actualSampleRate)
       const res = await api.audio.transcribeAudio.mutate({
         audioBase64: wavBase64,
         language: config.stt.language !== 'auto' ? config.stt.language : undefined,
@@ -528,11 +618,9 @@ async function submitTranscript(): Promise<void> {
     }
   } catch (err) {
     console.warn('[useSTT] Whisper transcription error, fallback to Vosk text:', err)
+  } finally {
+    isTranscribing = false
   }
-
-  recordedBuffers = []
-  preRollBuffers = []
-  preRollSamples = 0
 
   // If Whisper returned empty, use Vosk candidate
   if (!fullText && voskFallback) {
@@ -545,9 +633,36 @@ async function submitTranscript(): Promise<void> {
   fullText = fullText.replace(/^[,.:;!?-]+/, '').replace(/^(ah|um|uh|er|eh|hey|hi|yo)\s+/i, '').trim()
   if (!fullText) return
 
-  // Guard: prevent duplicate submissions
+  // Discard empty/hallucinated bracketed tokens (e.g. [BLANK_AUDIO], [TAKE VO], [MUSIC], (silence)) or repetition loops
+  const isGarbageToken = (t: string) => {
+    const stripped = t.replace(/[\[\({][^\]\)}]*[\]\)}]/g, '').trim()
+    if (!stripped) return true
+    if (/^(he ever|yeah ever|take vo|blank audio|you|subtitles by|thank you for watching)$/i.test(stripped)) return true
+    // Repeated 2-word loop e.g. "he ever he ever"
+    if (/^(\b\w+\s+\w+\b)(?:\s+\1)+$/i.test(stripped)) return true
+    return false
+  }
+
+  if (isGarbageToken(fullText)) {
+    console.info('[useSTT] Dropped silent/garbage transcription token:', fullText)
+    phase.value = 'idle'
+    transcript.value = ''
+    chunks.value = []
+    api.audio.stopListening.mutate().catch(() => {})
+    return
+  }
+
+  // Guard: prevent duplicate submissions and substring spurt bursts
   const now = Date.now()
-  if (fullText === lastSubmitText && now - lastSubmitTime < 3000) return
+  const lower = fullText.toLowerCase()
+  const lastLower = lastSubmitText.toLowerCase()
+  if (
+    now - lastSubmitTime < 3500 &&
+    (lower === lastLower || lower.startsWith(lastLower) || lastLower.startsWith(lower) || (lastLower.length > 5 && lower.includes(lastLower)))
+  ) {
+    console.info('[useSTT] Dropping redundant/spurt auto-submit:', fullText, 'vs last:', lastSubmitText)
+    return
+  }
   lastSubmitTime = now
   lastSubmitText = fullText
 
@@ -582,6 +697,16 @@ function disable(): void {
   stopMic()
 }
 
+export function stopListening(): void {
+  clearSilenceTimer()
+  phase.value = 'idle'
+  transcript.value = ''
+  chunks.value = []
+  recordedBuffers = []
+  api.audio.stopListening.mutate().catch(() => {})
+  console.info('[useSTT] Manually stopped listening')
+}
+
 // ── Composable ──
 
 export function useSTT() {
@@ -597,5 +722,6 @@ export function useSTT() {
     activeWakeWord: customWakeWord,
     enable,
     disable,
+    stopListening,
   }
 }

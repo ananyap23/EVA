@@ -79,6 +79,23 @@ export class MotorService extends BaseService {
   }
 
   /**
+   * Execute a direct click at absolute screen coordinates with cursor animation.
+   * Does NOT perform screenshot coordinate rescaling.
+   */
+  async clickDirect(x: number, y: number): Promise<ActionResult> {
+    this.log.info(`Direct click @ screen (${x}, ${y})`)
+    try {
+      await this.emitCursorAnimation({ type: 'move-click', x, y })
+      this.mouse.click(x, y)
+      return { success: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Click failed'
+      this.log.error(`Direct click failed: ${msg}`)
+      return { success: false, error: msg }
+    }
+  }
+
+  /**
    * Execute a single agent action.
    *
    * Routes the action to the correct controller based on action type.

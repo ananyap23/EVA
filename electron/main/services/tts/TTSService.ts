@@ -1,3 +1,4 @@
+import { KokoroTTSProvider } from './providers/KokoroTTSProvider'
 import { BaseService } from '@electron/services/base/BaseService'
 import { BaseTTSProvider } from './providers/BaseTTSProvider'
 import { ElevenLabsProvider } from './providers/ElevenLabsProvider'
@@ -17,12 +18,58 @@ import type { PersonaService } from '@electron/services/persona/PersonaService'
  * Listens for `tts:speak` events from the AgentLoop and
  * emits `tts:audio` chunks + `tts:status` updates.
  */
+
+/**
+ * Strip markdown, code blocks, URLs, and noisy symbols so TTS produces smooth, natural speech
+ * without literally pronouncing hyphens, asterisks, brackets, or code junk.
+ */
+export function cleanTextForSpeech(raw: string): string {
+  if (!raw) return ''
+  let text = raw
+  // Code blocks
+  text = text.replace(/```[\s\S]*?```/g, '')
+  // Inline code
+  text = text.replace(/`([^`]+)`/g, '$1')
+  // URLs
+  text = text.replace(/https?:\/\/\S+/gi, '')
+  // Images and markdown links
+  text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+  text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  // HTML tags
+  text = text.replace(/<[^>]+>/g, '')
+  // Markdown headers (#) and blockquotes (>)
+  text = text.replace(/^#{1,6}\s+/gm, '')
+  text = text.replace(/^>\s+/gm, '')
+  // Tables
+  text = text.replace(/\|/g, ' ')
+  // Bullet lists (- , * , + ) -> natural comma pause
+  text = text.replace(/^[\s*+-]+\s+/gm, '')
+  // Bold, italics, strikethrough (*, **, _, ~)
+  text = text.replace(/[*_~]{1,3}/g, '')
+  // Remove clusters of symbols like &^((*$( or -----
+  text = text.replace(/[-_=+~`!@#$%^&*()[\]{}|\\:;"'<>,.?/]{3,}/g, ' ')
+  // Remove isolated special characters that TTS pronounces literally
+  text = text.replace(/\s[&^$#@|~\\/<>+=]\s/g, ' ')
+  // Normalize hyphens/dashes between words to natural commas or spaces
+  text = text.replace(/\s+[-–—]+\s+/g, ', ')
+  // Clean multiple newlines and spaces
+  text = text.replace(/\n{2,}/g, '. ')
+  text = text.replace(/\n/g, ' ')
+  text = text.replace(/\s{2,}/g, ' ')
+  return text.trim()
+}
+
 export class TTSService extends BaseService {
   private provider: BaseTTSProvider | null = null
   private speaking = false
   private abortController: AbortController | null = null
   private personaService: PersonaService | null = null
   private activeVoiceId = ''
+  private activeProviderName = ''
+  private activeApiKey = ''
+  private activeKokoroVoice = ''
+  private activeKokoroDtype = ''
+  private activeAccent = ''
 
   // Bound handlers for proper add/remove
   private readonly boundOnSpeak = this.onSpeak.bind(this)
@@ -120,10 +167,11 @@ export class TTSService extends BaseService {
   }
 
   /** Audio format for the current provider */
-  get audioFormat(): 'mpeg' | 'opus' | 'web-speech' {
+  get audioFormat(): 'mpeg' | 'opus' | 'wav' | 'web-speech' {
     const config = getConfig()
     const effective = this.resolveEffectiveProvider(config)
     if (effective === 'web-speech') return 'web-speech'
+    if (this.provider?.name === 'kokoro') return 'wav'
     return this.provider?.name === 'yandex-alice' ? 'opus' : 'mpeg'
   }
 
@@ -136,6 +184,9 @@ export class TTSService extends BaseService {
     this.disposeProvider()
 
     switch (resolved) {
+      case 'kokoro':
+        this.provider = new KokoroTTSProvider(config.tts.kokoroVoice || 'af_heart', config.tts.kokoroDtype || 'q8')
+        break
       case 'web-speech':
         this.provider = null
         break
@@ -191,7 +242,9 @@ export class TTSService extends BaseService {
   }
 
   /** Speak text — streams audio chunks via event bus */
-  async speak(text: string): Promise<void> {
+  async speak(rawText: string): Promise<void> {
+    const text = cleanTextForSpeech(rawText)
+    if (!text) return
     const config = getConfig()
 
     if (!config.tts.enabled) {
@@ -343,19 +396,46 @@ export class TTSService extends BaseService {
   /** Event handler: config:changed — apply TTS settings in realtime */
   private onConfigChanged(config: AppConfig): void {
     if (!config.tts.enabled) {
-      this.stop()
-      this.disposeProvider()
-      this.provider = null
-      this.log.info('TTS disabled at runtime')
+      if (this.provider) {
+        this.stop()
+        this.disposeProvider()
+        this.provider = null
+        this.log.info('TTS disabled at runtime')
+      }
       return
     }
 
-    const needsApiKey = config.tts.provider !== 'yandex-alice' && config.tts.provider !== 'web-speech' && config.tts.provider !== 'google-translate'
+    const effective = this.resolveEffectiveProvider(config)
+    const voiceId = this.getActiveVoiceId()
+    const apiKey = config.tts.apiKey || ''
+    const kokoroVoice = config.tts.kokoroVoice || 'af_heart'
+    const kokoroDtype = config.tts.kokoroDtype || 'q8'
+    const accent = config.tts.accent || 'en-US'
 
-    // TTS enabled — create or rebuild provider
-    if (!needsApiKey || config.tts.apiKey) {
+    // Prevent rebuilding providers on every unrelated config save!
+    if (
+      this.provider &&
+      this.activeProviderName === effective &&
+      this.activeVoiceId === voiceId &&
+      this.activeApiKey === apiKey &&
+      this.activeKokoroVoice === kokoroVoice &&
+      this.activeKokoroDtype === kokoroDtype &&
+      this.activeAccent === accent
+    ) {
+      return
+    }
+
+    this.activeProviderName = effective
+    this.activeVoiceId = voiceId
+    this.activeApiKey = apiKey
+    this.activeKokoroVoice = kokoroVoice
+    this.activeKokoroDtype = kokoroDtype
+    this.activeAccent = accent
+
+    const needsApiKey = effective === 'elevenlabs'
+    if (!needsApiKey || apiKey) {
       mainEventBus.emit('agent:dismiss-warning', { id: 'missing-tts-key' })
-      this.createProvider(config.tts.provider, config.tts.apiKey, this.getActiveVoiceId())
+      this.createProvider(effective, apiKey, voiceId)
       this.log.info('TTS provider (re)built from config change')
     }
   }

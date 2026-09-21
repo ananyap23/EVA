@@ -38,7 +38,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['dismiss'],
+  emits: ['dismiss', 'deleteTask'],
 
   setup(props) {
     /** True when all tasks are in terminal state (done/failed) */
@@ -74,14 +74,13 @@ export default defineComponent({
             </span>
           )}
 
-          {this.allDone && (
-            <button
+          <button
               class="island__dismiss"
+              title="Clear all tasks"
               onClick={() => this.$emit('dismiss')}
             >
               close
             </button>
-          )}
         </div>
 
         <ul class="microtask__list">
@@ -98,6 +97,17 @@ export default defineComponent({
                 </span>
               )}
               <span class="microtask__text">{task.text}</span>
+              <button
+                type="button"
+                class="microtask__delete"
+                title="Delete this task"
+                onClick={(e: MouseEvent) => {
+                  e.stopPropagation()
+                  this.$emit('deleteTask', task.id)
+                }}
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>

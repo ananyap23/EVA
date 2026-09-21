@@ -134,7 +134,7 @@ export default defineComponent({
                     <div class="memory-session__messages">
                       {this.expandedSession.messages.map((msg, i) => (
                         <div key={i} class={['memory-msg', `memory-msg--${msg.role}`]}>
-                          <span class="memory-msg__role">{msg.role === 'user' ? '👤' : '🤖'}</span>
+                          <span class="memory-msg__role material-symbols-rounded" style="font-size: 15px; opacity: 0.7;">{msg.role === 'user' ? 'person' : 'smart_toy'}</span>
                           <span class="memory-msg__text">{msg.text}</span>
                         </div>
                       ))}

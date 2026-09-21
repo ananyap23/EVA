@@ -25,6 +25,7 @@ export interface GPUReport {
 
 /**
  * GPUService — detects graphics hardware, monitors VRAM, and optimizes local AI inference.
+ * Optimized with fast direct nvidia-smi probing to eliminate PowerShell CIM timeouts.
  */
 export class GPUService extends BaseService {
   private cachedReport: GPUReport | null = null
@@ -52,17 +53,74 @@ export class GPUService extends BaseService {
     return this.detectGPU()
   }
 
+  /**
+   * Fast real-time VRAM probe for telemetry and diagnostics.
+   */
+  async getRealtimeVRAM(): Promise<{ totalMB: number; usedMB: number; freeMB: number }> {
+    if (process.platform === 'win32') {
+      try {
+        const { stdout } = await execAsync(
+          'nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv,noheader,nounits',
+          { timeout: 1500 }
+        )
+        const parts = stdout.trim().split(',').map((p) => parseInt(p.trim(), 10))
+        if (parts.length >= 3 && !isNaN(parts[0])) {
+          return {
+            totalMB: parts[0],
+            usedMB: parts[1],
+            freeMB: parts[2],
+          }
+        }
+      } catch {
+        // Ignored
+      }
+    }
+
+    const total = this.cachedReport?.vramTotalMB || 4096
+    return { totalMB: total, usedMB: 0, freeMB: total }
+  }
+
   private async detectGPU(): Promise<GPUReport> {
     const gpus: GPUInfoItem[] = []
     let activeGPU = 'Default Graphics'
     let vramTotalMB = 0
+    let detectedViaNvidiaSmi = false
 
-    // 1. Query Windows CIM / WMI for exact hardware controllers
-    if (process.platform === 'win32') {
+    // 1. Fast path: Direct nvidia-smi probe on Windows / Linux (50-100ms, avoids PowerShell timeout)
+    try {
+      const { stdout } = await execAsync(
+        'nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits',
+        { timeout: 2000 }
+      )
+      const lines = stdout.trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        const [name, memStr, driver] = line.split(',').map((s) => s.trim())
+        const vram = parseInt(memStr, 10) || 0
+        if (name) {
+          gpus.push({
+            name,
+            vramMB: vram,
+            driverVersion: driver || '',
+            vendor: 'NVIDIA',
+            isDedicated: true,
+          })
+          if (vram > vramTotalMB) {
+            vramTotalMB = vram
+            activeGPU = name
+          }
+          detectedViaNvidiaSmi = true
+        }
+      }
+    } catch {
+      // nvidia-smi not present or not an NVIDIA system
+    }
+
+    // 2. Fallback: Query Windows CIM / WMI if nvidia-smi was not available
+    if (!detectedViaNvidiaSmi && process.platform === 'win32') {
       try {
         const { stdout } = await execAsync(
           'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion | ConvertTo-Json"',
-          { timeout: 5000 }
+          { timeout: 8000 }
         )
         const parsed = JSON.parse(stdout.trim())
         const controllers = Array.isArray(parsed) ? parsed : [parsed]
@@ -88,11 +146,11 @@ export class GPUService extends BaseService {
           }
         }
       } catch (err) {
-        this.log.debug('CIM query failed, falling back to Electron GPU info:', err)
+        this.log.debug('CIM query skipped or failed, falling back to Electron GPU info:', err)
       }
     }
 
-    // 2. Query Electron GPU feature status
+    // 3. Query Electron GPU feature status
     let features: Record<string, string> = {}
     let isAccelerated = true
     try {
@@ -102,10 +160,12 @@ export class GPUService extends BaseService {
       // Ignored
     }
 
-    // 3. Fallback to Electron getGPUInfo if CIM was empty
+    // 4. Fallback to Electron getGPUInfo if still empty
     if (gpus.length === 0) {
       try {
-        const info = await app.getGPUInfo('basic') as { gpuDevice?: Array<{ deviceName?: string; vendorId?: number }> }
+        const info = (await app.getGPUInfo('basic')) as {
+          gpuDevice?: Array<{ deviceName?: string; vendorId?: number }>
+        }
         if (info.gpuDevice && Array.isArray(info.gpuDevice)) {
           for (const dev of info.gpuDevice) {
             if (dev.deviceName) {
@@ -130,16 +190,16 @@ export class GPUService extends BaseService {
       if (dedicated?.vramMB) vramTotalMB = dedicated.vramMB
     }
 
-    // Calculate local LLM recommendation
-    let recommendedLocalLLM = 'CPU Mode: 1B - 3B quantized models (e.g. llama3.2:1b, qwen2.5:1.5b)'
+    // Calculate local LLM recommendation specifically tailored for hardware
+    let recommendedLocalLLM = 'CPU Mode: 1B - 3B quantized models (e.g. qwen2.5:1.5b)'
     if (vramTotalMB >= 16000) {
-      recommendedLocalLLM = 'High-End GPU: Full offloading up to 14B - 32B Q4/Q5 models (e.g. deepseek-r1:14b, qwen2.5:14b)'
+      recommendedLocalLLM = 'High-End GPU: Full offload up to 14B - 32B Q4 models'
     } else if (vramTotalMB >= 8000) {
-      recommendedLocalLLM = 'Fast GPU: Full offloading for 7B - 8B Q4/Q5 models (e.g. llama3.1:8b, mistral:7b, qwen2.5-coder:7b)'
+      recommendedLocalLLM = 'Fast GPU: Full offload for 7B - 8B Q4 models (e.g. qwen2.5vl:7b)'
     } else if (vramTotalMB >= 3500) {
-      recommendedLocalLLM = 'Dedicated GPU: Fast offloading for 3B - 7B Q4 models (e.g. llama3.2:3b, qwen2.5:3b, mistral:7b-q4)'
+      recommendedLocalLLM = 'Dedicated 4GB GPU: Recommended for 3B - 4B Q4 multimodal models (e.g. qwen2.5vl:3b)'
     } else if (vramTotalMB >= 2000) {
-      recommendedLocalLLM = 'Entry GPU: Recommended for 1B - 3B models with partial offload (e.g. llama3.2:3b, qwen2.5:1.5b)'
+      recommendedLocalLLM = 'Entry GPU: Recommended for 1B - 2B models with partial offload'
     }
 
     this.cachedReport = {

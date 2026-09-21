@@ -2561,3 +2561,531 @@
   border-left: 3px solid hsl(var(--glass-accent-h) var(--glass-accent-s) var(--glass-accent-l) / 0.5);
   border-radius: 12px;
 }
+
+/* --- Apple / iOS Dual Model & Pipeline Architecture --- */
+.ios-pipeline-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 10px 16px 8px 16px;
+  box-sizing: border-box;
+  width: auto;
+}
+
+.ios-pipeline-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ios-pipeline-header__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.95 0 0);
+  letter-spacing: -0.01em;
+}
+
+.ios-pipeline-header__desc {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.4;
+}
+
+.ios-pipeline-block {
+  box-sizing: border-box;
+  width: auto;
+}
+
+.ios-pipeline-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ios-pipeline-grid > * {
+  min-width: 0;
+}
+
+.ios-model-card {
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.ios-model-card .custom-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ios-model-card .custom-select__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.ios-model-card .custom-select__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.ios-pipeline-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ios-pipeline-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  user-select: none;
+}
+
+.ios-model-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: space-between;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ios-model-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.ios-model-card .custom-select {
+  width: 100%;
+}
+
+.ios-model-card .custom-select__trigger {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.ios-model-card .custom-select__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: calc(100% - 24px);
+}
+
+.ios-model-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.ios-model-card__tag {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+}
+
+.ios-model-card__status {
+  font-weight: 500;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.ios-model-card__status--ready {
+  color: #34d399;
+}
+
+.ios-model-card__caption {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  line-height: 1.3;
+}
+
+.ios-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.ios-download-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ios-voice-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 6px;
+}
+
+.ios-voice-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: oklch(0.95 0 0);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms ease;
+  white-space: nowrap;
+}
+
+.ios-voice-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.ios-voice-preview-btn--active {
+  background: #e11d48 !important;
+  border-color: #f43f5e !important;
+  color: #fff !important;
+  box-shadow: 0 0 14px rgba(225, 29, 72, 0.45);
+}
+
+.ios-voice-preview-hint {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ios-sliders-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 10px 16px 14px 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-sizing: border-box;
+  width: auto;
+}
+
+.ios-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ios-slider-row__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+  color: oklch(0.85 0 0);
+}
+
+.ios-slider-row__value {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: hsl(var(--glass-accent-h) var(--glass-accent-s) 75%);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.ios-slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  cursor: pointer;
+}
+
+.ios-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.ios-slider-input::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+}
+
+.ios-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.ios-progress-bar__fill {
+  height: 100%;
+  background: #38bdf8;
+  border-radius: 999px;
+  transition: width 200ms ease;
+}
+
+.ios-progress-bar__fill--indeterminate {
+  width: 40%;
+  position: absolute;
+  animation: ios-progress-slide 1.2s infinite ease-in-out;
+}
+
+@keyframes ios-progress-slide {
+  0% { left: -40%; }
+  50% { left: 100%; }
+  100% { left: 100%; }
+}
+
+.custom-select__option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.custom-select__option-sublabel {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.custom-select__option-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.custom-select__download-icon {
+  font-family: 'Material Symbols Rounded';
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.35);
+  font-style: normal;
+  line-height: 1;
+}
+
+.custom-select__download-icon:hover {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+
+/* --- Distinct Sidebar Tab Badges & Select Badges --- */
+.settings-nav__tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: oklch(0.65 0 0);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  text-align: left;
+}
+
+.settings-nav__tab:hover {
+  background: rgba(255 255 255 / 0.05);
+  color: oklch(0.9 0 0);
+}
+
+.settings-nav__tab--active {
+  background: rgba(255 255 255 / 0.08) !important;
+  color: oklch(0.98 0 0) !important;
+  font-weight: 600;
+}
+
+.settings-nav__tab-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: #fff;
+  flex-shrink: 0;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.settings-nav__tab:hover .settings-nav__tab-badge {
+  transform: scale(1.08);
+}
+
+.settings-nav__tab--active .settings-nav__tab-badge {
+  transform: scale(1.1);
+}
+
+.settings-nav__tab-badge .settings-nav__tab-icon {
+  font-family: 'Material Symbols Rounded';
+  font-size: 16px;
+  width: auto;
+  line-height: 1;
+}
+
+.settings-nav__tab-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-select__trigger-content {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.custom-select__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-family: 'Material Symbols Rounded';
+  font-size: 13px;
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-right: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.custom-select__option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: oklch(0.85 0 0);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+  white-space: nowrap;
+}
+
+.custom-select__option .custom-select__badge {
+  margin-right: 0;
+}
+
+
+/* --- Enhanced In-App Model Download Progress --- */
+.ios-model-download-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  margin-top: 6px;
+}
+
+.ios-model-download-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.ios-model-download-text {
+  color: oklch(0.9 0 0);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ios-model-download-pct {
+  color: #38bdf8;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ios-model-download-target {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ios-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  color: #f87171;
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.ios-cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: #f87171;
+}

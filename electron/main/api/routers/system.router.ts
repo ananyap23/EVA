@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { getAccentHsl } from '@electron/utils/color'
-import { toggleWindow, showWindow, forceHideWindow } from '@electron/WindowManager'
+import { toggleWindow, showWindow, forceHideWindow, isSettingsActive, setSettingsActive } from '@electron/WindowManager'
 
 import type { GPUService } from '@electron/services/gpu/GPUService'
 
@@ -84,7 +84,7 @@ export const systemRouter = trpcRouter({
   /** Subscribe to global mic command hotkey events */
   onToggleMicHotkey: publicProcedure.subscription(() => {
     return observable<boolean>((emit) => {
-      const handler = () => emit.next(true)
+      const handler = () => { if (!isSettingsActive()) emit.next(true) }
       mainEventBus.on('hotkey:toggle-mic', handler)
       return () => {
         mainEventBus.removeListener('hotkey:toggle-mic', handler)
@@ -115,6 +115,14 @@ export const systemRouter = trpcRouter({
     })
   }),
 
+  /** Notify backend whether settings view is currently open */
+  setSettingsOpen: publicProcedure
+    .input(z.object({ open: z.boolean() }))
+    .mutation(({ input }) => {
+      setSettingsActive(input.open)
+      return { ok: true }
+    }),
+
   /** Close settings — notify renderer to switch back */
   closeSettings: publicProcedure.mutation(() => {
     mainEventBus.emit('system:close-settings')
@@ -128,7 +136,7 @@ export const systemRouter = trpcRouter({
 
   /** Show the Atlas window (triggered by STT wake word) */
   showWindow: publicProcedure.mutation(() => {
-    showWindow()
+    if (!isSettingsActive()) showWindow()
   }),
 
   /** Open an external URL in the default browser */

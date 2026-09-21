@@ -49,8 +49,21 @@ export class GeminiProvider extends BaseLLMProvider {
   constructor(apiKey: string, model: string = '') {
     super()
     this.client = new GoogleGenAI({ apiKey })
-    this.model = model
-    log.info(`Initialized with model: ${model}`)
+
+    const m = (model || '').toLowerCase().trim()
+    const isNonGemini = m.includes('qwen') || m.includes('llama') || m.includes('mistral') || m.includes('deepseek') || m.includes('phi') || (m.includes(':') && !m.startsWith('gemini'))
+    
+    let sanitized = model
+    if (!model || isNonGemini) {
+      sanitized = 'gemini-2.5-flash'
+      log.warn(`[Gemini] Invalid or non-Gemini model name "${model}" — defaulting to "${sanitized}"`)
+    } else if (m === 'gemini-3.5-flash-lite' || m === 'gemini-3.5-flash' || m === 'gemini-3-flash-lite') {
+      sanitized = 'gemini-2.5-flash'
+      log.warn(`[Gemini] Non-existent Gemini model "${model}" — falling back to "${sanitized}"`)
+    }
+
+    this.model = sanitized
+    log.info(`Initialized with model: ${sanitized}`)
   }
 
   // ═══════════════════════════════════════════════════════════════

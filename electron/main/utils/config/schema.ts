@@ -46,6 +46,12 @@ export interface LLMConfig {
   separateVisionModel?: boolean
   /** Classifier model (intent detection, cheap) */
   classifierModel: string
+  /** Active multimodal Ollama model */
+  ollamaModel?: string
+  /** Idle timeout in minutes before unloading Ollama model from VRAM (0 = never, default 5) */
+  ollamaIdleMinutes?: number
+  /** Ollama context window size (default 2048 for low resource) */
+  ollamaContextSize?: number
 }
 
 export interface GenerationConfig {
@@ -64,7 +70,11 @@ export interface GenerationConfig {
 }
 
 export interface TTSConfig {
-  /** TTS provider: 'elevenlabs' | 'yandex-alice' | 'web-speech' | 'google-translate' */
+  /** Voice for Kokoro TTS (e.g. 'af_heart', 'af_sarah', 'af_bella', 'am_adam') */
+  kokoroVoice?: string
+  /** Quantization for Kokoro TTS (default: 'q8') */
+  kokoroDtype?: string
+  /** TTS provider: 'kokoro' | 'elevenlabs' | 'yandex-alice' | 'web-speech' | 'google-translate' */
   provider: string
   /** TTS API key (e.g. ElevenLabs) */
   apiKey: string
@@ -114,8 +124,13 @@ export interface AgentConfig {
 export interface STTConfig {
   /** Whether STT is enabled */
   enabled: boolean
-  /** STT Engine / Flow: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk' */
-  provider: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
+  /** Handy (cjpais/Handy) local server endpoint */
+  handyEndpoint?: string
+  /** Groq API Key for Cloud Whisper */
+  groqApiKey?: string
+  /** In-app local model (e.g. onnx-community/moonshine-tiny-ONNX, Xenova/whisper-base.en, Xenova/whisper-small.en) */
+  inAppWhisperModel?: string
+  provider: 'handy' | 'groq-whisper' | 'faster-whisper' | 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
   /** Language code for model selection (e.g. 'en', 'ru') */
   language: string
   /** Audio input device ID (empty string = system default) */
@@ -130,8 +145,6 @@ export interface STTConfig {
   whisperApiKey?: string
   /** Whisper model name (e.g. 'whisper-1', 'base', 'tiny') */
   whisperModel: string
-  /** In-app embedded Whisper model from HuggingFace (e.g. 'Xenova/whisper-base.en') */
-  inAppWhisperModel?: string
 }
 
 // ═══════════════════════════════════════════════════════════════

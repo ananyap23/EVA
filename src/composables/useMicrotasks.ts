@@ -62,6 +62,14 @@ export function useMicrotasks() {
     tasks.value = next
   }
 
+  function deleteTask(id: string) {
+    tasks.value = tasks.value.filter((t) => t.id !== id)
+  }
+
+  function clearTasks() {
+    tasks.value = []
+  }
+
   /** Number of completed (done + failed) tasks */
   const completedCount = computed(() =>
     tasks.value.filter(t => t.status === 'done' || t.status === 'failed').length,
@@ -85,6 +93,8 @@ export function useMicrotasks() {
     tasks,
     addTask,
     setTasks,
+    deleteTask,
+    clearTasks,
     progressPercent,
     progressLabel,
   }

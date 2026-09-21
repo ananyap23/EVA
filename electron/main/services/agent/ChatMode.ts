@@ -84,16 +84,32 @@ export async function runChatOnly(
   let fullResponse = ''
   let hadThoughts = false
   let hasStartedResponse = false
+  let terminated = false
+
+  const onTerminate = () => {
+    terminated = true
+  }
+  mainEventBus.on('agent:terminate', onTerminate)
 
   try {
     // Try to use cached context for token savings
     const cachedContent = await intelligence.getCache(systemPrompt, persona.id, undefined, 'chat').catch(() => null)
+
+    if (terminated) {
+      log.info('ChatMode aborted before streaming started')
+      return history
+    }
 
     // Pass system prompt via native systemInstruction — saves ~300 tokens
     const stopStream = sessionLogger?.startTimer('LLM streaming')
     const stream = intelligence.streamWithThoughts(messages, systemPrompt, cachedContent ?? undefined)
 
     for await (const chunk of stream) {
+      if (terminated) {
+        log.info('Chat stream aborted by user termination')
+        break
+      }
+
       if (chunk.type === 'thought') {
         // Emit thinking chunk → ThoughtsIsland
         hadThoughts = true
@@ -116,6 +132,8 @@ export async function runChatOnly(
           })
           await sleep(thoughtsTransitionDelay)
         }
+
+        if (terminated) break
 
         // Emit response chunk → ResponseIsland
         hasStartedResponse = true
@@ -153,23 +171,29 @@ export async function runChatOnly(
       })
     }
 
+    if (terminated) {
+      log.info('Chat response suppressed due to user cancellation')
+      return history
+    }
+
     log.info(`Response complete (${fullResponse.length} chars, thoughts: ${hadThoughts}, persona: ${persona.name})`)
     stopStream?.()
     sessionLogger?.step(`Response length: ${fullResponse.length} chars`)
     sessionLogger?.step(`Had thoughts: ${hadThoughts}`)
 
     // Trigger TTS for the response
-    if (fullResponse.trim()) {
+    if (fullResponse.trim() && !terminated) {
       mainEventBus.emit('tts:speak', { text: fullResponse })
     }
 
     // Async fact extraction (fire-and-forget)
-    if (factExtractor && fullResponse.trim()) {
+    if (factExtractor && fullResponse.trim() && !terminated) {
       factExtractor.extract(persona.id, command, fullResponse).catch((err) => {
         log.error('Fact extraction failed:', err)
       })
     }
   } catch (err) {
+    if (terminated) return history
     // Show error in ResponseIsland
     const message = formatLLMError(err)
     log.error('LLM stream error:', err)

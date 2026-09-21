@@ -6,5 +6,7 @@ Classify this user message into one of three categories:
 
 **Priority rule**: If a question COULD benefit from up-to-date or factual web data (people, events, relationships, news, prices, weather) → classify as **direct**, NOT chat. When in doubt between chat and direct → choose **direct**.
 
+**Speech & Phonetic Note**: User messages come from speech recognition. Obvious phonetic mishearings (e.g. "in visual studio code that i don't file guy main dart java" = "in visual studio code write a file called main.java") must be resolved before deciding intent.
+
 Consider context — if previous messages involved screen actions, follow-up questions likely need action too.{{context}}
 Current message: "{{command}}"

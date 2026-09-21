@@ -113,7 +113,7 @@ export interface MainEvents {
   /** TTS speaking status changed */
   'tts:status': [payload: { speaking: boolean }]
   /** TTS audio format for current provider */
-  'tts:format': [payload: { format: 'mpeg' | 'opus' | 'web-speech' }]
+  'tts:format': [payload: { format: 'mpeg' | 'opus' | 'wav' | 'web-speech' }]
   /** TTS audio chunk (streaming) */
   'tts:audio': [payload: { chunk: Buffer; done: boolean }]
   /** Request TTS to speak text */

@@ -5,6 +5,8 @@ import { OpenAIProvider } from './providers/OpenAIProvider'
 import { ContextCacheService } from './ContextCacheService'
 import { getConfig, type AppConfig } from '@electron/utils/config'
 import { mainEventBus } from '@electron/utils/eventBus'
+import { OllamaModelManager } from './OllamaModelManager'
+import { app } from 'electron'
 
 /**
  * IntelligenceService — manages LLM providers for 3 roles.
@@ -23,7 +25,25 @@ export class IntelligenceService extends BaseService {
   private personaHandler: ((payload: { id: string }) => void) | null = null
   private cacheService = new ContextCacheService()
 
+  /** Abort active generation on any running provider */
+  abortActiveLLM(): void {
+    this.log.info('Aborting active LLM requests...')
+    // Abort via OllamaModelManager queue (covers all Ollama inference roles)
+    OllamaModelManager.getInstance().abortCurrent('User stopped')
+    // Also abort direct provider references for non-Ollama providers
+    if (this.textProvider && typeof (this.textProvider as any).abort === 'function') {
+      (this.textProvider as any).abort()
+    }
+    if (this.visionProvider && typeof (this.visionProvider as any).abort === 'function') {
+      (this.visionProvider as any).abort()
+    }
+    if (this.classifierProvider && typeof (this.classifierProvider as any).abort === 'function') {
+      (this.classifierProvider as any).abort()
+    }
+  }
+
   async init(): Promise<void> {
+    mainEventBus.on('agent:terminate', () => this.abortActiveLLM())
     // Always register config change listener — even before providers are created.
     // This ensures settings saved in the UI trigger reinit even on first-time setup.
     this.configHandler = () => {
@@ -54,28 +74,51 @@ export class IntelligenceService extends BaseService {
       return
     }
 
-    // Create providers (respecting separateVisionModel toggle)
-    const visionModelName = config.llm.separateVisionModel
-      ? (config.llm.visionModel || config.llm.textModel)
-      : config.llm.textModel
+    if (config.llm.provider === 'ollama') {
+      const ollamaModel = config.llm.ollamaModel || config.llm.textModel || 'qwen2.5vl:3b'
+      const ollamaURL = config.llm.baseURL || 'http://127.0.0.1:11434/v1'
+      const singleProvider = new OpenAIProvider('ollama', ollamaModel, ollamaURL)
+      this.textProvider = singleProvider
+      this.visionProvider = singleProvider
+      this.classifierProvider = singleProvider
+      this.log.info(`[Ollama] Initialized unified model ${ollamaModel} @ ${ollamaURL} across all roles`)
+    } else {
+      const isGemini = config.llm.provider === 'gemini'
+      const sanitizeModelForProvider = (m?: string, defaultModel?: string): string => {
+        if (!m) return defaultModel || (isGemini ? 'gemini-2.5-flash' : 'gpt-4o')
+        if (isGemini) {
+          const lower = m.toLowerCase()
+          if (lower.includes('qwen') || lower.includes('llama') || lower.includes('mistral') || lower.includes('deepseek') || lower.includes('phi') || (lower.includes(':') && !lower.startsWith('gemini'))) {
+            return defaultModel || 'gemini-2.5-flash'
+          }
+        }
+        return m
+      }
 
-    this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, config.llm.textModel, config.llm.baseURL)
-    this.visionProvider = this.createProvider(
-      config.llm.provider, config.llm.apiKey,
-      visionModelName,
-      config.llm.baseURL,
-    )
-    this.classifierProvider = this.createProvider(
-      config.llm.provider, config.llm.apiKey,
-      config.llm.classifierModel || config.llm.textModel,
-      config.llm.baseURL,
-    )
+      const textModelName = sanitizeModelForProvider(config.llm.textModel, 'gemini-2.5-flash')
+      const visionModelName = config.llm.separateVisionModel
+        ? sanitizeModelForProvider(config.llm.visionModel, textModelName)
+        : textModelName
+      const classifierModelName = sanitizeModelForProvider(config.llm.classifierModel, textModelName)
 
-    this.log.info(
-      `IntelligenceService initialized — text: ${config.llm.textModel}, ` +
-      `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
-      `classifier: ${config.llm.classifierModel || config.llm.textModel}`,
-    )
+      this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, textModelName, config.llm.baseURL)
+      this.visionProvider = this.createProvider(
+        config.llm.provider, config.llm.apiKey,
+        visionModelName,
+        config.llm.baseURL,
+      )
+      this.classifierProvider = this.createProvider(
+        config.llm.provider, config.llm.apiKey,
+        classifierModelName,
+        config.llm.baseURL,
+      )
+
+      this.log.info(
+        `IntelligenceService initialized — text: ${textModelName}, ` +
+        `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
+        `classifier: ${classifierModelName}`,
+      )
+    }
 
     // Auto-detect Computer Use support from the vision model
     this.detectComputerUse(config)
@@ -97,6 +140,18 @@ export class IntelligenceService extends BaseService {
       this.log.debug(`Persona switched to ${payload.id} — cache will be refreshed on next call`)
     }
     mainEventBus.on('persona:switched', this.personaHandler)
+
+    // Initialize OllamaModelManager for Ollama providers
+    if (config.llm.provider === 'ollama') {
+      OllamaModelManager.getInstance().init().catch((err) => {
+        this.log.warn('OllamaModelManager init failed (Ollama may not be running):', err?.message || err)
+      })
+
+      // Ensure clean VRAM release on application quit
+      app.on('before-quit', () => {
+        OllamaModelManager.getInstance().shutdown().catch(() => {})
+      })
+    }
   }
 
 
@@ -156,27 +211,61 @@ export class IntelligenceService extends BaseService {
     mainEventBus.emit('agent:dismiss-warning', { id: 'missing-api-key' })
     mainEventBus.emit('agent:dismiss-warning', { id: 'missing-text-model' })
 
-    const visionModelName = config.llm.separateVisionModel
-      ? (config.llm.visionModel || config.llm.textModel)
-      : config.llm.textModel
+    if (config.llm.provider === 'ollama') {
+      // OLLAMA MODE: enforce single unified multimodal model across all three roles.
+      // When model changes, safely switch via OllamaModelManager.
+      const ollamaModel = config.llm.ollamaModel || config.llm.textModel
+      this.log.info(`[Ollama] Reinitializing: unified model = ${ollamaModel}, separateVision is FORCED OFF`)
 
-    this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, config.llm.textModel, config.llm.baseURL)
-    this.visionProvider = this.createProvider(
-      config.llm.provider, config.llm.apiKey,
-      visionModelName,
-      config.llm.baseURL,
-    )
-    this.classifierProvider = this.createProvider(
-      config.llm.provider, config.llm.apiKey,
-      config.llm.classifierModel || config.llm.textModel,
-      config.llm.baseURL,
-    )
+      // Safe switch: abort active, unload old, update model
+      OllamaModelManager.getInstance().switchModel(ollamaModel).catch((err) => {
+        this.log.warn('OllamaModelManager switch model failed:', err?.message || err)
+      })
 
-    this.log.info(
-      `Providers reloaded — text: ${config.llm.textModel}, ` +
-      `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
-      `classifier: ${config.llm.classifierModel || config.llm.textModel}`,
-    )
+      const ollamaURL = config.llm.baseURL || 'http://127.0.0.1:11434/v1'
+      const singleProvider = new OpenAIProvider('ollama', ollamaModel, ollamaURL)
+      this.textProvider = singleProvider
+      this.visionProvider = singleProvider
+      this.classifierProvider = singleProvider
+
+      this.log.info(`[Ollama] All 3 roles → ${ollamaModel} @ ${ollamaURL} (single model, zero thrashing)`)
+    } else {
+      const isGemini = config.llm.provider === 'gemini'
+      const sanitizeModelForProvider = (m?: string, defaultModel?: string): string => {
+        if (!m) return defaultModel || (isGemini ? 'gemini-2.5-flash' : 'gpt-4o')
+        if (isGemini) {
+          const lower = m.toLowerCase()
+          if (lower.includes('qwen') || lower.includes('llama') || lower.includes('mistral') || lower.includes('deepseek') || lower.includes('phi') || (lower.includes(':') && !lower.startsWith('gemini'))) {
+            return defaultModel || 'gemini-2.5-flash'
+          }
+        }
+        return m
+      }
+
+      const textModelName = sanitizeModelForProvider(config.llm.textModel, 'gemini-2.5-flash')
+      const visionModelName = config.llm.separateVisionModel
+        ? sanitizeModelForProvider(config.llm.visionModel, textModelName)
+        : textModelName
+      const classifierModelName = sanitizeModelForProvider(config.llm.classifierModel, textModelName)
+
+      this.textProvider = this.createProvider(config.llm.provider, config.llm.apiKey, textModelName, config.llm.baseURL)
+      this.visionProvider = this.createProvider(
+        config.llm.provider, config.llm.apiKey,
+        visionModelName,
+        config.llm.baseURL,
+      )
+      this.classifierProvider = this.createProvider(
+        config.llm.provider, config.llm.apiKey,
+        classifierModelName,
+        config.llm.baseURL,
+      )
+
+      this.log.info(
+        `Providers reloaded — text: ${textModelName}, ` +
+        `vision: ${visionModelName} (separate=${Boolean(config.llm.separateVisionModel)}), ` +
+        `classifier: ${classifierModelName}`,
+      )
+    }
 
     // Re-detect Computer Use support
     this.cuProvider = null
@@ -189,14 +278,34 @@ export class IntelligenceService extends BaseService {
   /** Create a provider instance by name */
   private createProvider(name: string, apiKey: string, model: string, baseURL?: string): BaseLLMProvider {
     switch (name) {
-      case 'gemini':
-        return new GeminiProvider(apiKey, model)
+      case 'gemini': {
+        // Guard against Ollama/OpenAI model names accidentally being passed to Gemini
+        const m = (model || '').toLowerCase()
+        const isNonGemini = m.includes('qwen') || m.includes('llama') || m.includes('mistral') || m.includes('deepseek') || m.includes('phi') || (m.includes(':') && !m.startsWith('gemini'))
+        const sanitizedModel = isNonGemini || !model ? 'gemini-2.5-flash' : model
+        if (isNonGemini) {
+          this.log.warn(`[Gemini] Invalid model name "${model}" for Gemini provider — auto-falling back to "${sanitizedModel}"`)
+        }
+        return new GeminiProvider(apiKey, sanitizedModel)
+      }
       case 'openai':
         return new OpenAIProvider(apiKey, model, baseURL)
-      case 'ollama':
-        return new OpenAIProvider(apiKey || 'ollama', model, baseURL || 'http://localhost:11434/v1')
+      case 'ollama': {
+        // SINGLE MODEL ENFORCEMENT: all three roles (text, vision, classifier)
+        // must use the same active multimodal model selected by the user in Settings.
+        // This prevents multiple models from loading simultaneously and exhausting VRAM.
+        // Use the top-level imported getConfig() — never require() in ESM bundles.
+        const cfg = getConfig()
+        const rawModel = (cfg.llm as any).ollamaModel || (cfg.llm as any).textModel || model || 'qwen2.5vl:3b'
+        const m = rawModel.toLowerCase()
+        const isCloudModel = m.startsWith('gemini') || m.startsWith('gpt') || m.startsWith('claude')
+        const ollamaModel = isCloudModel ? 'qwen2.5vl:3b' : rawModel
+        const ollamaURL = baseURL || (cfg.llm as any).baseURL || 'http://127.0.0.1:11434/v1'
+        this.log.debug(`[Ollama] Creating provider role with unified model: ${ollamaModel}`)
+        return new OpenAIProvider(apiKey || 'ollama', ollamaModel, ollamaURL)
+      }
       case 'lm-studio':
-        return new OpenAIProvider(apiKey || 'lm-studio', model, baseURL || 'http://localhost:1234/v1')
+        return new OpenAIProvider(apiKey || 'lm-studio', model, baseURL || 'http://127.0.0.1:1234/v1')
       default:
         this.log.error(`Unknown provider: ${name}, falling back to gemini`)
         return new GeminiProvider(apiKey, model)

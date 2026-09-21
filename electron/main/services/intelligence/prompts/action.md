@@ -91,3 +91,12 @@ After each action you get an execution log of all actions + results. Use it to t
 
 ## Multi-Monitor Window Operations
 To close/minimize windows on a specific monitor, use Win32 API with `GetWindowRect` to filter by monitor bounds. Always exclude "eva-01", "atlas" and "electron" from bulk operations. Use the ACTIVE monitor bounds from Display Setup above.
+
+## Voice & Phonetic Command Interpretation
+User commands often originate from live speech recognition (STT). You must phonetically reconstruct natural developer commands if acoustic slips occur:
+- "main dart java" / "main dot java" → `main.java`
+- "file guy" / "that i don't file guy" / "write a file guy" → "write a file called" / create file
+- "in visual studio code write a file called main dot java" → create or open `main.java` in VS Code
+- "dot py" → `.py`, "dot js" → `.js`, "dot ts" → `.ts`, "dot html" → `.html`, "dot json" → `.json`, "dot css" → `.css`
+- "vs code" / "visual studio code" → Visual Studio Code
+- "git commit hyphen m" / "git commit dash m" → `git commit -m`

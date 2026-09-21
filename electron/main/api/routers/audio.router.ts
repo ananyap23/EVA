@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'
 import { mainEventBus } from '@electron/utils/eventBus'
 import { createLogger } from '@electron/utils/logger'
+import { isKokoroDownloaded, startKokoroDownload, cancelKokoroDownload } from '@electron/services/tts/providers/KokoroTTSProvider'
+import { isInAppWhisperDownloaded, cancelInAppSTTDownload } from '@electron/services/stt/STTService'
 import { getConfig } from '@electron/utils/config'
 import type { STTService } from '@electron/services/stt/STTService'
 import { getModelStatus as getModelStatusForLanguage } from '@electron/services/stt/ModelManager'
@@ -20,6 +22,42 @@ export function setSTTService(stt: STTService): void {
  * audio.router — audio/voice + TTS + STT endpoints.
  */
 export const audioRouter = trpcRouter({
+
+  /** Get on-disk downloaded status of Kokoro TTS */
+  getKokoroStatus: publicProcedure.query(() => {
+    return {
+      downloaded: isKokoroDownloaded(),
+      model: 'onnx-community/Kokoro-82M-v1.0-ONNX',
+    }
+  }),
+
+  /** Download Kokoro TTS model */
+  downloadKokoroModel: publicProcedure.mutation(async () => {
+    return startKokoroDownload()
+  }),
+
+  /** Cancel ongoing Kokoro download */
+  cancelKokoroDownload: publicProcedure.mutation(() => {
+    cancelKokoroDownload()
+    return { ok: true }
+  }),
+
+  /** Get on-disk status of in-app Whisper STT */
+  getInAppSTTStatus: publicProcedure
+    .input(z.object({ model: z.string().optional() }).optional())
+    .query(({ input }) => {
+      const model = input?.model || 'Xenova/whisper-base.en'
+      return {
+        downloaded: isInAppWhisperDownloaded(model),
+        model,
+      }
+    }),
+
+  /** Cancel in-app Whisper STT download */
+  cancelInAppSTTDownload: publicProcedure.mutation(() => {
+    cancelInAppSTTDownload()
+    return { ok: true }
+  }),
 
   // ── STT ──
 
@@ -83,6 +121,34 @@ export const audioRouter = trpcRouter({
       return { ok: true }
     }),
 
+    /** Subscribe to in-app model download & compilation progress */
+  onInAppModelProgress: publicProcedure.subscription(() => {
+    return observable<{
+      type?: 'stt' | 'tts'
+      model: string
+      file?: string
+      progress?: number
+      loaded?: number
+      total?: number
+      status?: string
+    }>((emit) => {
+      function onSTTProgress(payload: any) {
+        emit.next({ ...payload, type: 'stt' })
+      }
+      function onTTSProgress(payload: any) {
+        emit.next({ ...payload, type: 'tts' })
+      }
+
+      mainEventBus.on('stt:in-app-progress', onSTTProgress)
+      mainEventBus.on('tts:kokoro-progress', onTTSProgress)
+
+      return () => {
+        mainEventBus.off('stt:in-app-progress', onSTTProgress)
+        mainEventBus.off('tts:kokoro-progress', onTTSProgress)
+      }
+    })
+  }),
+
   /** Subscribe to STT model download progress */
   onSTTModelStatus: publicProcedure.subscription(() => {
     return observable<{ downloaded: boolean; progress?: number; error?: string }>((emit) => {
@@ -109,11 +175,10 @@ export const audioRouter = trpcRouter({
     }),
 
   /** Test connectivity to offline Whisper endpoint */
-  testWhisper: publicProcedure
-    .input(z.object({ endpoint: z.string().optional(), apiKey: z.string().optional() }).optional())
+  testWhisper: publicProcedure.input(z.object({ endpoint: z.string().optional(), apiKey: z.string().optional(), model: z.string().optional() }).optional())
     .mutation(async ({ input }) => {
       if (!sttService) return { ok: false, error: 'STTService not available' }
-      return sttService.testWhisperConnection(input?.endpoint, input?.apiKey)
+      return sttService.testWhisperConnection(input?.endpoint, input?.apiKey, input?.model)
     }),
 
   // ── TTS (Phase 3.5) ──
@@ -151,8 +216,8 @@ export const audioRouter = trpcRouter({
 
   /** Subscribe to TTS audio format (mpeg, opus, or web-speech) — emitted when speech starts */
   onTTSFormat: publicProcedure.subscription(() => {
-    return observable<{ format: 'mpeg' | 'opus' | 'web-speech' }>((emit) => {
-      function onFormat(payload: { format: 'mpeg' | 'opus' | 'web-speech' }) {
+    return observable<{ format: 'mpeg' | 'opus' | 'wav' | 'web-speech' }>((emit) => {
+      function onFormat(payload: { format: 'mpeg' | 'opus' | 'wav' | 'web-speech' }) {
         emit.next(payload)
       }
 

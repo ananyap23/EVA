@@ -1,16 +1,16 @@
-import { defineComponent, ref, onMounted } from 'vue'
+import { defineComponent, ref, onMounted, type PropType } from 'vue'
 import { api } from '@/api'
-import logoUrl from '../../../../build/icon.png'
+import logoUrl from '@/assets/icon.png'
 
 /**
- * AboutTab — centered hero with big logo, version info, runtime details, and links.
+ * AboutTab — centered hero with logo, version info, runtime details, and links.
  */
 export default defineComponent({
   name: 'AboutTab',
 
   props: {
     onClose: {
-      type: Function,
+      type: Function as PropType<() => void>,
       required: true,
     },
   },
@@ -31,44 +31,40 @@ export default defineComponent({
       api.system.openExternal.mutate({ url })
     }
 
-    return { info, openExternal }
-  },
-
-  render() {
-    return (
+    return () => (
       <div class="about-page">
-        {/* Hero section — centered vertically */}
+        {/* Hero section */}
         <div class="about-page__hero">
           <img class="about-page__logo" src={logoUrl} alt="EVA-01" />
           <div class="about-page__name">EVA-01</div>
-          <div class="about-page__version">v{this.info?.version ?? '…'}</div>
-          <div class="about-page__tagline">AI Desktop Agent</div>
+          <div class="about-page__version">v{info.value?.version ?? '0.2.3'}</div>
+          <div class="about-page__tagline">Autonomous AI Desktop Agent</div>
 
-          {/* Runtime pills inline  */}
+          {/* Runtime pills inline */}
           <div class="about-page__runtime">
             <span class="about-page__runtime-pill">
-              Electron {this.info?.electron ?? '…'}
+              Electron {info.value?.electron ?? '34.x'}
             </span>
             <span class="about-page__runtime-pill">
-              Chromium {this.info?.chrome ?? '…'}
+              Chromium {info.value?.chrome ?? '132.x'}
             </span>
             <span class="about-page__runtime-pill">
-              Node {this.info?.node ?? '…'}
+              Node {info.value?.node ?? '20.x'}
             </span>
           </div>
         </div>
 
         {/* Links row */}
         <div class="about-page__links">
-          <button class="about-page__link" onClick={() => this.openExternal('https://github.com/dortanes/atlas')}>
+          <button class="about-page__link" onClick={() => openExternal('https://github.com/dortanes/atlas')}>
             <span class="about-page__link-icon">code</span>
             Source Code
           </button>
-          <button class="about-page__link" onClick={() => this.openExternal('https://github.com/dortanes/atlas/issues')}>
+          <button class="about-page__link" onClick={() => openExternal('https://github.com/dortanes/atlas/issues')}>
             <span class="about-page__link-icon">bug_report</span>
             Report Bug
           </button>
-          <button class="about-page__link" onClick={() => this.openExternal('https://github.com/dortanes/atlas/releases')}>
+          <button class="about-page__link" onClick={() => openExternal('https://github.com/dortanes/atlas/releases')}>
             <span class="about-page__link-icon">new_releases</span>
             Releases
           </button>

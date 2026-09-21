@@ -42,7 +42,7 @@ export default defineComponent({
     const { state: agentState, currentAction, sendCommand, terminateProcess } = useAgent()
     const { permissions, respond: respondPermission } = usePermissions()
     const { warnings, dismiss: dismissWarning } = useWarnings()
-    const { tasks, setTasks, progressPercent, progressLabel } = useMicrotasks()
+    const { tasks, setTasks, deleteTask, clearTasks, progressPercent, progressLabel } = useMicrotasks()
     const { response, dismissing: responseDismissing, dismiss: dismissResponse } = useResponse()
     const { searchData, dismissing: searchDismissing, dismiss: dismissSearch, clear: clearSearch, openFile, revealFile } = useSearch()
 
@@ -241,6 +241,8 @@ export default defineComponent({
       warnings,
       tasks,
       setTasks,
+      deleteTask,
+      clearTasks,
       progressPercent,
       progressLabel,
       response,
@@ -352,7 +354,8 @@ export default defineComponent({
               tasks={this.tasks}
               progressPercent={this.progressPercent}
               progressLabel={this.progressLabel}
-              onDismiss={() => this.setTasks([])}
+              onDismiss={() => this.clearTasks()}
+              onDeleteTask={(id: string) => this.deleteTask(id)}
             />
 
             {/* Listening — live voice transcript */}
@@ -390,6 +393,9 @@ export default defineComponent({
               )}
             </div>
           </div>
+
+
+          
 
           {/* Input Bar — always in DOM for smooth height transition */}
           <div

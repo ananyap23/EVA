@@ -24,6 +24,18 @@ const log = createLogger('WindowManager')
 
 let win: BrowserWindow | null = null
 let isAgentVisible = false
+let settingsActive = false
+
+export function isSettingsActive(): boolean {
+  return settingsActive
+}
+
+export function setSettingsActive(active: boolean): void {
+  settingsActive = active
+  log.info(`Settings active state changed to: ${active}`)
+}
+
+let lastToggleTime = 0
 
 // ── Multi-Monitor Positioning ──
 
@@ -81,7 +93,26 @@ export async function createWindow(): Promise<BrowserWindow> {
   // Clicks pass through to the desktop; hover detection still works
   win.setIgnoreMouseEvents(true, { forward: true })
 
-  // External links → system browser
+  // Clean renderer console forwarding
+  win.webContents.on('console-message', (_event, level, message) => {
+    // 0 = verbose/debug, 1 = info, 2 = warning, 3 = error
+    if (level === 0) return
+    if (/\[useSTT\] (Manually|Deactivated|AudioWorklet|Dropping|Linear)/i.test(message)) return
+    if (/\[useTTS\] (Playback failed|stop|Blob)/i.test(message)) return
+    if (/Electron Security Warning/i.test(message)) return
+
+    const time = new Date().toTimeString().split(' ')[0]
+    const clean = message.replace(/https?:\/\/[^\s)]+/g, '').trim()
+    if (!clean) return
+
+    if (level >= 3) {
+      console.error(`[${time}] [ERROR] [UI] ${clean}`)
+    } else if (level === 2) {
+      console.warn(`[${time}] [WARN] [UI] ${clean}`)
+    } else if (/Auto-submit|sendCommand|Voice recognized/i.test(clean)) {
+      console.log(`[${time}] [INFO] [UI] ${clean}`)
+    }
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:')) shell.openExternal(url)
     return { action: 'deny' }
@@ -102,13 +133,17 @@ export async function createWindow(): Promise<BrowserWindow> {
   }
 
   // Listen for config changes to dynamically adjust alwaysOnTop
+  let lastAlwaysOnTop: boolean | undefined = undefined
   mainEventBus.on('config:changed', (cfg) => {
     if (win && cfg.ui?.alwaysOnTop !== undefined) {
-      if (cfg.ui.alwaysOnTop) {
-        win.setAlwaysOnTop(true, 'screen-saver')
-        win.moveTop()
-      } else {
-        win.setAlwaysOnTop(false)
+      if (cfg.ui.alwaysOnTop !== lastAlwaysOnTop) {
+        lastAlwaysOnTop = cfg.ui.alwaysOnTop
+        if (cfg.ui.alwaysOnTop) {
+          win.setAlwaysOnTop(true, 'screen-saver')
+          win.moveTop()
+        } else {
+          win.setAlwaysOnTop(false)
+        }
       }
     }
   })
@@ -117,6 +152,7 @@ export async function createWindow(): Promise<BrowserWindow> {
   win.setOpacity(0)
 
   log.info('Window created (hidden)')
+
   return win
 }
 
@@ -125,6 +161,10 @@ export async function createWindow(): Promise<BrowserWindow> {
 /** Make the window visible, reposition to active monitor, bring always on top (keeps click-through). */
 export function showWindow(): void {
   if (!win) return
+  if (settingsActive) {
+    log.debug('showWindow ignored: settings is active')
+    return
+  }
 
   const cfg = getConfig()
   const keepOnTop = cfg.ui.alwaysOnTop ?? true
@@ -149,6 +189,7 @@ export function showWindow(): void {
 /** Show window AND disable click-through (for settings overlay). Does NOT activate the agent. */
 export function showWindowForSettings(): void {
   if (!win) return
+  setSettingsActive(true)
   // Make window visible on active monitor WITHOUT emitting agent-visibility
   const { x, y, width, height } = getActiveDisplayBounds()
   win.setBounds({ x, y, width, height })
@@ -169,6 +210,16 @@ export function showWindowForSettings(): void {
 
 export function toggleWindow(): void {
   if (!win) return
+  if (settingsActive) {
+    log.debug('toggleWindow ignored: settings is active')
+    return
+  }
+  const now = Date.now()
+  if (now - lastToggleTime < 400) {
+    log.debug('toggleWindow ignored due to rapid double trigger (debounce)')
+    return
+  }
+  lastToggleTime = now
 
   const isActuallyVisible = isAgentVisible && win.getOpacity() > 0
 
@@ -209,6 +260,7 @@ export function forceHideWindow(): void {
   if (!win) return
   win.setIgnoreMouseEvents(true)
   win.setOpacity(0)
+  settingsActive = false
   isAgentVisible = false
   log.info('Window force-hidden')
 }

@@ -115,61 +115,83 @@ export class AgentLoop {
     }
 
     const persona = this.getPersona()
+    let terminated = false
+    const onTerminate = () => { terminated = true }
+    mainEventBus.on('agent:terminate', onTerminate)
 
-    // Classify intent: chat / direct / action
-    sessionLogger?.section('Intent Classification')
-    const stopClassify = sessionLogger?.startTimer('Duration')
-    const intentClassifier = this.classifierService.get<IntentClassifier>('intent')
-    const intent = await intentClassifier.classify({ command, recentHistory: history })
-    stopClassify?.()
-    sessionLogger?.step(`Result: ${intent}`)
+    try {
+      // Classify intent: chat / direct / action
+      sessionLogger?.section('Intent Classification')
+      mainEventBus.emit('agent:action', {
+        label: 'Understanding intent...',
+        progress: 15,
+      })
+      const stopClassify = sessionLogger?.startTimer('Duration')
+      const intentClassifier = this.classifierService.get<IntentClassifier>('intent')
+      const intent = await intentClassifier.classify({ command, recentHistory: history })
+      stopClassify?.()
+      sessionLogger?.step(`Result: ${intent}`)
 
-    // ── Direct mode (no vision needed) ──
-    if (intent === 'direct' && this.motorService) {
-      log.info('Routing to Direct Action (shell/hotkey, no vision)')
-      sessionLogger?.section('Direct Action')
-      const result = await runDirectAction(
+      if (terminated) {
+        log.info('AgentLoop aborted by user termination after classification')
+        mainEventBus.emit('agent:action', null)
+        return history
+      }
+
+      // ── Direct mode (no vision needed) ──
+      if (intent === 'direct' && this.motorService) {
+        log.info('Routing to Direct Action (shell/hotkey, no vision)')
+        sessionLogger?.section('Direct Action')
+        const result = await runDirectAction(
+          command,
+          history,
+          this.intelligence,
+          this.promptLoader,
+          this.stateMachine,
+          persona,
+          this.motorService,
+          this.factExtractor ?? undefined,
+          this.searchService ?? undefined,
+          sessionLogger,
+        )
+
+        if (terminated) return history
+
+        // If LLM said it needs vision, fall through to action mode
+        if (result.needsVision) {
+          log.info('Direct mode requested vision fallback — routing to action loop')
+          sessionLogger?.step('Fallback: needs vision → action mode')
+          return this.runActionMode(command, history, persona, sessionLogger)
+        }
+
+        return result.history
+      }
+
+      // ── Action mode (vision + motor) ──
+      if (intent === 'action' && this.visionService && this.motorService) {
+        if (terminated) return history
+        return this.runActionMode(command, history, persona, sessionLogger)
+      }
+
+      if (terminated) return history
+
+      // ── Chat mode (conversational) ──
+      sessionLogger?.section('Chat Mode')
+      const result = await runChatOnly(
         command,
         history,
         this.intelligence,
         this.promptLoader,
-        this.stateMachine,
         persona,
-        this.motorService,
+        this.visionService,
         this.factExtractor ?? undefined,
-        this.searchService ?? undefined,
         sessionLogger,
       )
-
-      // If LLM said it needs vision, fall through to action mode
-      if (result.needsVision) {
-        log.info('Direct mode requested vision fallback — routing to action loop')
-        sessionLogger?.step('Fallback: needs vision → action mode')
-        return this.runActionMode(command, history, persona, sessionLogger)
-      }
-
-      return result.history
+      this.stateMachine.transition('TASK_DONE')
+      return result
+    } finally {
+      mainEventBus.off('agent:terminate', onTerminate)
     }
-
-    // ── Action mode (vision + motor) ──
-    if (intent === 'action' && this.visionService && this.motorService) {
-      return this.runActionMode(command, history, persona, sessionLogger)
-    }
-
-    // ── Chat mode (conversational) ──
-    sessionLogger?.section('Chat Mode')
-    const result = await runChatOnly(
-      command,
-      history,
-      this.intelligence,
-      this.promptLoader,
-      persona,
-      this.visionService,
-      this.factExtractor ?? undefined,
-      sessionLogger,
-    )
-    this.stateMachine.transition('TASK_DONE')
-    return result
   }
 
   /**

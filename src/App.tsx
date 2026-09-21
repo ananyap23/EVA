@@ -1,6 +1,7 @@
 import { defineComponent, ref, onUnmounted } from 'vue'
 import MainView from '@/views/MainView'
 import SettingsView from '@/views/SettingsView'
+import { setSTTSettingsOpen } from '@/composables/useSTT'
 import { api } from '@/api'
 
 /**
@@ -31,11 +32,15 @@ export default defineComponent({
         agentWasVisibleBeforeSettings = agentIsVisible.value
         // Disable click-through so user can interact with settings
         api.system.setIgnoreMouseEvents.mutate({ ignore: false })
+        setSTTSettingsOpen(true)
+        api.system.setSettingsOpen.mutate({ open: true }).catch(() => {})
         view.value = 'settings'
       },
     })
 
     function closeSettings() {
+      setSTTSettingsOpen(false)
+      api.system.setSettingsOpen.mutate({ open: false }).catch(() => {})
       view.value = 'main'
       // Re-enable click-through for overlay mode
       api.system.setIgnoreMouseEvents.mutate({ ignore: true, forward: true })

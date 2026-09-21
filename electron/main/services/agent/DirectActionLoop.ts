@@ -34,6 +34,7 @@ import { mainEventBus } from '@electron/utils/eventBus'
 import { formatLLMError } from '@electron/utils/llmErrors'
 import { createLogger } from '@electron/utils/logger'
 import { blurForAction, restoreAfterAction } from '@electron/WindowManager'
+import { ScreenStateService } from '@electron/services/vision/ScreenStateService'
 import { streamFinalResponse } from './ResponseStreamer'
 import { AgentStateMachine } from './AgentState'
 import type { AgentProfile } from '@electron/services/persona/AgentProfile'
@@ -89,6 +90,88 @@ export async function runDirectAction(
     ? factExtractor.getFactsText(persona.id)
     : 'No known facts about the user yet.'
 
+  const cmdLower = command.toLowerCase().trim()
+  const screenStateService = ScreenStateService.getInstance()
+
+  // ── 1. Deterministic Desktop State Inspection Fast-Path (0ms, 0 screenshots, 0 shell scripts) ──
+  try {
+    const isWindowsQuery = /^(?:what|which)\s+(?:windows|apps|applications)\s+(?:are\s+)?(?:currently\s+)?(?:open|running)/i.test(cmdLower) ||
+      /^(?:list|show|get)\s+(?:all\s+)?(?:open\s+)?(?:windows|apps|applications)/i.test(cmdLower)
+
+    const isForegroundQuery = /^(?:what|which)\s+(?:is\s+)?(?:the\s+)?(?:active|foreground|current)\s+(?:window|app|application)/i.test(cmdLower)
+
+    const isTaskbarQuery = /^(?:what|which)\s+(?:apps|items|icons)\s+(?:are\s+)?(?:on\s+)?(?:the\s+|my\s+)?taskbar/i.test(cmdLower) ||
+      /^(?:what(?:'s| is)|show)\s+(?:on\s+)?(?:the\s+|my\s+)?taskbar/i.test(cmdLower)
+
+    const isScreenOverviewQuery = /^(?:tell me about|what(?:'s| is) on|describe|overview of)\s+(?:my\s+|the\s+)?screen/i.test(cmdLower)
+
+    if (isWindowsQuery || isForegroundQuery || isTaskbarQuery || isScreenOverviewQuery) {
+      mainEventBus.emit('agent:action', {
+        label: 'Checking desktop state...',
+        progress: 40,
+      })
+      const screenState = await screenStateService.getScreenState()
+      let directText = ''
+      if (isWindowsQuery) {
+        log.info('[DirectAction] Resolved open windows directly from ScreenStateService')
+        directText = screenStateService.describeOpenWindows(screenState)
+      } else if (isForegroundQuery) {
+        log.info('[DirectAction] Resolved foreground window directly from ScreenStateService')
+        directText = screenStateService.describeForegroundWindow(screenState)
+      } else if (isTaskbarQuery) {
+        log.info('[DirectAction] Resolved taskbar items directly from ScreenStateService')
+        directText = screenStateService.describeTaskbar(screenState)
+      } else {
+        log.info('[DirectAction] Resolved screen overview directly from ScreenStateService')
+        directText = screenStateService.describeCompleteDesktop(screenState)
+      }
+
+      mainEventBus.emit('agent:action', null)
+      stateMachine.transition('TASK_DONE')
+      await streamFinalResponse(directText, persona.id, factExtractor)
+      return {
+        history: [
+          ...history,
+          { role: 'user', text: command },
+          { role: 'model', text: directText },
+        ],
+        needsVision: false,
+      }
+    }
+
+    // ── 2. Deterministic Taskbar Click Snapping ──
+    const taskbarClickMatch = cmdLower.match(/^(?:please\s+)?(?:click|open|launch|focus|switch to)\s+(.+?)\s+(?:on|from)\s+(?:the\s+)?taskbar$/i)
+    if (taskbarClickMatch && taskbarClickMatch[1]) {
+      const target = taskbarClickMatch[1].trim()
+      const screenState = await screenStateService.getScreenState()
+      const match = screenStateService.resolveElementCoordinates(target, screenState)
+      if (match && match.type === 'taskbar') {
+        log.info(`[DirectAction] Direct Taskbar Snap: Clicking "${match.name}" @ (${match.x}, ${match.y})`)
+        mainEventBus.emit('agent:action', {
+          label: `Clicking ${match.name} on taskbar...`,
+          progress: 50,
+        })
+        blurForAction()
+        await motorService.clickDirect(match.x, match.y)
+        restoreAfterAction()
+        const respText = `Clicked ${match.name} on the taskbar.`
+        mainEventBus.emit('agent:action', null)
+        stateMachine.transition('TASK_DONE')
+        await streamFinalResponse(respText, persona.id, factExtractor)
+        return {
+          history: [
+            ...history,
+            { role: 'user', text: command },
+            { role: 'model', text: respText },
+          ],
+          needsVision: false,
+        }
+      }
+    }
+  } catch (err) {
+    log.warn(`[DirectAction] Screen state fast-path error: ${err}`)
+  }
+
   // ── Stable system prompt (no time/facts — for caching) ──
   const systemPrompt = promptLoader.load('system', {
     os: `${os.platform()} ${os.release()}`,
@@ -100,15 +183,30 @@ export async function runDirectAction(
   // ── Direct action prompt (stable — cacheable) ──
   const directPrompt = promptLoader.load('direct_action', {}, persona.id)
 
+  // ── Desktop State Snapshot ──
+  let desktopContext = ''
+  try {
+    const screenState = await ScreenStateService.getInstance().getScreenState()
+    if (screenState) {
+      desktopContext = ScreenStateService.getInstance().formatStateForPrompt(screenState)
+    }
+  } catch (err) {
+    log.debug(`Direct action desktop state skipped: ${err}`)
+  }
+
   // Dynamic context — changes every call, NOT cached
   const dynamicContext = buildDynamicContext(userFacts)
 
   const messages: LLMMessage[] = [
     ...history,
-    { role: 'user', text: `${dynamicContext}\n\n${directPrompt}\n\nUser command: ${command}` },
+    { role: 'user', text: `${dynamicContext}${desktopContext ? `\n\n${desktopContext}` : ''}\n\n${directPrompt}\n\nUser command: ${command}` },
   ]
 
   stateMachine.transition('LLM_RESPONDING')
+  mainEventBus.emit('agent:action', {
+    label: 'Planning action...',
+    progress: 30,
+  })
 
   let fullResponse = ''
 
@@ -323,11 +421,100 @@ export async function runDirectAction(
       }
 
       blurForAction()
-      let resolvedCommand = action.command
-      if (action.action === 'runCommand' && !resolvedCommand && action.response) {
-        const trimmed = action.response.trim()
-        if (trimmed.length < 120 && !trimmed.includes('\n')) {
-          resolvedCommand = trimmed
+      let resolvedCommand = action.command?.trim()
+      // Detect if LLM mistakenly returned conversational text instead of a real shell command
+      const looksLikeConversation = (cmd?: string) => {
+        if (!cmd) return true
+        return /^(the |i |here is |you |sure|today is|current time|hello|sorry|done|ok)/i.test(cmd)
+      }
+
+      // If LLM returned runCommand but omitted or botched the command string, auto-synthesize from user command
+      if (action.action === 'runCommand' && (!resolvedCommand || looksLikeConversation(resolvedCommand))) {
+        const lowerCmd = command.toLowerCase().trim()
+        const appMap: Record<string, string> = {
+          brave: 'brave',
+          'brave browser': 'brave',
+          firefox: 'firefox',
+          chrome: 'chrome',
+          'google chrome': 'chrome',
+          edge: 'msedge',
+          'microsoft edge': 'msedge',
+          arc: 'arc',
+          opera: 'opera',
+          vivaldi: 'vivaldi',
+          code: 'code',
+          'vs code': 'code',
+          'visual studio code': 'code',
+          notepad: 'notepad',
+          calculator: 'calc',
+          calc: 'calc',
+          explorer: 'explorer',
+          'file explorer': 'explorer',
+          spotify: 'spotify',
+          terminal: 'wt',
+          cmd: 'cmd',
+          powershell: 'powershell',
+        }
+
+        // Check for "search <query> on/in/with <browser>" pattern
+        const searchOnBrowserMatch = lowerCmd.match(/^(?:please\s+)?(?:search|look up|google|find)\s+(.+?)\s+(?:on|in|using|with)\s+(?:the\s+)?([a-z0-9_\-\.\s]+?)(?:\s+browser|\s+app)?$/i)
+        if (searchOnBrowserMatch && searchOnBrowserMatch[1] && searchOnBrowserMatch[2]) {
+          const rawQuery = searchOnBrowserMatch[1].trim()
+          const query = encodeURIComponent(rawQuery)
+          const browserRaw = searchOnBrowserMatch[2].trim()
+          const browserApp = appMap[browserRaw] || browserRaw
+          resolvedCommand = `Start-Process "${browserApp}" -ArgumentList "https://www.google.com/search?q=${query}"`
+          action.response = `Searching "${rawQuery}" on ${browserRaw}`
+          log.info(`[DirectAction] Auto-synthesized search on browser: "${resolvedCommand}" from user input "${command}"`)
+        } else {
+          // Check for "open/launch <app>" pattern
+          const openMatch = lowerCmd.match(/^(?:please\s+)?(?:open|launch|start|run)\s+(?:the\s+)?([a-z0-9_\-\.\s]+?)(?:\s+browser|\s+app|\s+application)?$/i)
+          if (openMatch && openMatch[1]) {
+            const rawApp = openMatch[1].trim()
+            const mapped = appMap[rawApp] || rawApp
+            resolvedCommand = `Start-Process "${mapped}"`
+            log.info(`[DirectAction] Auto-synthesized missing shell command: "${resolvedCommand}" from user input "${command}"`)
+          }
+        }
+      }
+
+      // Intercept any shell command attempting to query open windows/processes
+      if (resolvedCommand && /Get-Process.*MainWindow|MainWindowTitle|tasklist/i.test(resolvedCommand)) {
+        log.info(`[DirectAction] Intercepted shell window query (${resolvedCommand}) → resolving directly via ScreenStateService`)
+        const screenState = await ScreenStateService.getInstance().getScreenState()
+        fullResponse = ScreenStateService.getInstance().describeOpenWindows(screenState)
+        restoreAfterAction()
+        mainEventBus.emit('agent:action', null)
+        stateMachine.transition('TASK_DONE')
+        if (fullResponse.trim()) {
+          await streamFinalResponse(fullResponse, persona.id, factExtractor)
+        }
+        return {
+          history: [
+            ...history,
+            { role: 'user', text: command },
+            { role: 'model', text: fullResponse },
+          ],
+          needsVision: false,
+        }
+      }
+
+      if (action.action === 'runCommand' && (!resolvedCommand || looksLikeConversation(resolvedCommand))) {
+        log.info(`Direct action: LLM returned text/conversational answer without valid shell command: "${action.command || action.response}" — routing to conversational completion`)
+        fullResponse = action.response || action.reason || 'Done.'
+        restoreAfterAction()
+        mainEventBus.emit('agent:action', null)
+        stateMachine.transition('TASK_DONE')
+        if (fullResponse.trim()) {
+          await streamFinalResponse(fullResponse, persona.id, factExtractor)
+        }
+        return {
+          history: [
+            ...history,
+            { role: 'user', text: command },
+            { role: 'model', text: fullResponse },
+          ],
+          needsVision: false,
         }
       }
 

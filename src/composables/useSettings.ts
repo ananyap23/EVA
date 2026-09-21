@@ -48,11 +48,13 @@ export interface TTSConfig {
   pitch?: number
   style?: string
   accent?: string
+  kokoroVoice?: string
+  kokoroDtype?: string
 }
 
 export interface STTConfig {
   enabled: boolean
-  provider: 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
+  provider: 'handy' | 'groq-whisper' | 'faster-whisper' | 'in-app-whisper' | 'hybrid' | 'whisper' | 'vosk'
   language: string
   micDeviceId: string
   wakeWord: string
@@ -61,6 +63,8 @@ export interface STTConfig {
   whisperApiKey?: string
   inAppWhisperModel?: string
   micHotkey?: string
+  handyEndpoint?: string
+  groqApiKey?: string
 }
 
 export interface AgentConfig {
@@ -148,13 +152,15 @@ export function useSettings() {
     activePersonaId: 'eva-01-default',
   })
 
-  const loading = ref(false)
+    const loading = ref(false)
   const saving = ref(false)
   const saved = ref(false)
 
-  // ── Auto-save debounce ──
+  // ── Auto-save debounce & loop prevention ──
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let configLoaded = false
+  let isSaving = false
+  let lastSavedJSON = ''
 
   /** Load config from backend */
   async function loadConfig() {
@@ -162,7 +168,7 @@ export function useSettings() {
     try {
       const result = await api.settings.getConfig.query()
       Object.assign(config, result)
-      // Start watching for changes only after initial load
+      lastSavedJSON = JSON.stringify(config)
       configLoaded = true
     } catch (err) {
       console.error('Failed to load config:', err)
@@ -173,34 +179,45 @@ export function useSettings() {
 
   /** Save current config to backend */
   async function saveConfig() {
+    if (!configLoaded || isSaving) return
+    const currentJSON = JSON.stringify(config)
+    if (currentJSON === lastSavedJSON) return
+
+    isSaving = true
     saving.value = true
     saved.value = false
     try {
-      const raw = JSON.parse(JSON.stringify(config))
+      const raw = JSON.parse(currentJSON)
       const result = await api.settings.saveConfig.mutate(raw)
-      Object.assign(config, result)
+      lastSavedJSON = JSON.stringify(result)
       saved.value = true
       setTimeout(() => { saved.value = false }, 2000)
     } catch (err) {
       console.error('Failed to save config:', err)
     } finally {
       saving.value = false
+      isSaving = false
     }
   }
 
-  /** Debounced auto-save — triggers 800ms after last change */
+  /** Debounced auto-save — triggers 1000ms after last change */
   function scheduleSave() {
-    if (!configLoaded) return
+    if (!configLoaded || isSaving) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveConfig()
-    }, 800)
+    }, 1000)
   }
 
-  // Watch entire config deeply for auto-save
+  // Watch entire config deeply for auto-save without expensive JSON serialization on every tick
   watch(
-    () => JSON.stringify(config),
-    () => { scheduleSave() },
+    config,
+    () => {
+      if (!isSaving && configLoaded) {
+        scheduleSave()
+      }
+    },
+    { deep: true }
   )
 
   // ── Prompts ──

@@ -126,7 +126,7 @@ export default defineComponent({
                       </div>
                     ) : (
                       <>
-                        <span class="facts-item__source">{f.source === 'extracted' ? '🤖' : '✏️'}</span>
+                        <span class="facts-item__source material-symbols-rounded" style="font-size: 15px; opacity: 0.7;">{f.source === 'extracted' ? 'smart_toy' : 'edit_note'}</span>
                         <span class="facts-item__text">{f.text}</span>
                         <div class="facts-item__actions">
                           <button class="facts-item__btn facts-item__btn--edit" onClick={() => this.startEdit(f)}>edit</button>

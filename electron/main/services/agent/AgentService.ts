@@ -296,6 +296,7 @@ export class AgentService extends BaseService {
   /** Terminate any currently running action, shell process, queue, or loop */
   terminateProcess(): void {
     this.log.info('Terminating running process and resetting agent state...')
+    this.intelligence.abortActiveLLM()
     if (this.motorService) {
       this.motorService.killRunningProcess()
       this.motorService.hideCursor()

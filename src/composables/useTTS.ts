@@ -1,3 +1,21 @@
+
+function cleanSpeechText(raw: string): string {
+  if (!raw) return ''
+  return raw
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/[-_=+~`!@#$%^&*()[\]{}|\\:;"'<>,.?/]{3,}/g, ' ')
+    .replace(/\s+[-–—]+\s+/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 import { ref } from 'vue'
 import { api } from '@/api'
 
@@ -26,7 +44,7 @@ export function isSpeakingOrRecentEcho(): boolean {
   return false
 }
 
-let currentFormat: 'mpeg' | 'opus' | 'web-speech' = 'mpeg'
+let currentFormat: 'mpeg' | 'opus' | 'wav' | 'web-speech' = 'mpeg'
 let mediaSource: MediaSource | null = null
 let sourceBuffer: SourceBuffer | null = null
 let audioElement: HTMLAudioElement | null = null
@@ -114,7 +132,9 @@ function resetMSE() {
       }, { once: true })
 
       audioElement?.play().catch((err) => {
-        console.warn('[useTTS] Playback failed:', err)
+        if (err?.name !== 'AbortError' && !err?.message?.includes('interrupted')) {
+          console.warn('[useTTS] Playback failed:', err)
+        }
         speaking.value = false
         ttsEndedAt = Date.now()
       })
@@ -194,14 +214,17 @@ function endStreamBlob() {
     offset += c.length
   }
 
-  const blob = new Blob([merged.buffer], { type: 'audio/ogg; codecs=opus' })
+  const mimeType = currentFormat === 'wav' ? 'audio/wav' : 'audio/ogg; codecs=opus'
+  const blob = new Blob([merged.buffer], { type: mimeType })
   const url = URL.createObjectURL(blob)
 
   if (!audioElement) audioElement = new Audio()
   applySpeakerSink(audioElement)
   audioElement.src = url
   audioElement.play().catch((err) => {
-    console.warn('[useTTS] Blob playback failed:', err)
+    if (err?.name !== 'AbortError' && !err?.message?.includes('interrupted')) {
+      console.warn('[useTTS] Blob playback failed:', err)
+    }
   })
 
   // Clean up blob URL when done
@@ -222,7 +245,7 @@ function initSubscriptions() {
 
   // TTS format (tells us which playback pipeline to use)
   api.audio.onTTSFormat.subscribe(undefined, {
-    onData(data: { format: 'mpeg' | 'opus' | 'web-speech' }) {
+    onData(data: { format: 'mpeg' | 'opus' | 'wav' | 'web-speech' }) {
       currentFormat = data.format
     },
   })
@@ -244,7 +267,7 @@ function initSubscriptions() {
 
       if (data.speaking) {
         // New speech session — prepare playback pipeline
-        if (currentFormat === 'opus') {
+        if (currentFormat === 'opus' || currentFormat === 'wav') {
           resetBlob()
         } else if (currentFormat === 'mpeg') {
           resetMSE()
@@ -256,7 +279,7 @@ function initSubscriptions() {
   // TTS audio chunks
   api.audio.onTTSAudio.subscribe(undefined, {
     onData(data: { data: string; done: boolean }) {
-      if (currentFormat === 'opus') {
+      if (currentFormat === 'opus' || currentFormat === 'wav') {
         if (data.done) {
           endStreamBlob()
         } else {
@@ -275,49 +298,72 @@ function initSubscriptions() {
 
 /** Play speech using the browser's built-in Web Speech API */
 export function playWebSpeech(
-  text: string,
+  rawText: string,
   options?: { voice?: string; rate?: number; pitch?: number },
 ) {
-  if (!('speechSynthesis' in window)) return
-  window.speechSynthesis.cancel()
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
 
-  const utterance = new SpeechSynthesisUtterance(text)
-  if (options?.rate) utterance.rate = Math.max(0.5, Math.min(2.0, options.rate))
-  if (options?.pitch) utterance.pitch = Math.max(0.5, Math.min(1.5, options.pitch))
+  // Unpause engine if Chromium locked it
+  try {
+    window.speechSynthesis.resume()
+  } catch { /* ignore */ }
 
-  const voices = window.speechSynthesis.getVoices()
-  if (options?.voice) {
-    const matched = voices.find((v) => v.name === options.voice || v.voiceURI === options.voice)
-    if (matched) utterance.voice = matched
-  } else {
-    // Pick an English or system voice
-    const enVoice = voices.find((v) => v.lang.startsWith('en'))
-    if (enVoice) utterance.voice = enVoice
-  }
+  // Cancel prior utterance
+  try {
+    window.speechSynthesis.cancel()
+  } catch { /* ignore */ }
 
-  speaking.value = true
-  utterance.onstart = () => {
-    speaking.value = true
-  }
-  utterance.onend = () => {
-    speaking.value = false
-    ttsEndedAt = Date.now()
-  }
-  utterance.onerror = () => {
-    speaking.value = false
-    ttsEndedAt = Date.now()
-  }
+  const text = cleanSpeechText(rawText)
+  if (!text) return
 
-  // Failsafe auto-reset in case Chromium pauses or fails to emit onend on long texts
-  const estimatedSeconds = Math.max(3, Math.min(25, (text.split(/\s+/).length / 2.2) + 2))
+  // Defer speak slightly so Chromium asynchronously completes cancel() without swallowing new utterance
   setTimeout(() => {
-    if (speaking.value) {
+    try {
+      window.speechSynthesis.resume()
+    } catch { /* ignore */ }
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    if (options?.rate) utterance.rate = Math.max(0.5, Math.min(2.0, options.rate))
+    if (options?.pitch) utterance.pitch = Math.max(0.5, Math.min(1.5, options.pitch))
+
+    const voices = window.speechSynthesis.getVoices()
+    if (options?.voice) {
+      const matched = voices.find((v) => v.name === options.voice || v.voiceURI === options.voice)
+      if (matched) {
+        utterance.voice = matched
+        utterance.lang = matched.lang || 'en-US'
+      }
+    } else {
+      // Default to Samantha or English neural voice
+      const samantha = voices.find((v) => v.name.toLowerCase().includes('samantha'))
+      const enVoice = samantha || voices.find((v) => v.name.toLowerCase().includes('natural') || v.name.toLowerCase().includes('neural')) || voices.find((v) => v.lang.startsWith('en'))
+      if (enVoice) {
+        utterance.voice = enVoice
+        utterance.lang = enVoice.lang || 'en-US'
+      }
+    }
+
+    speaking.value = true
+    utterance.onstart = () => {
+      speaking.value = true
+    }
+    utterance.onend = () => {
       speaking.value = false
       ttsEndedAt = Date.now()
+      ;(window as any).__activeUtterance = null
     }
-  }, estimatedSeconds * 1000)
+    utterance.onerror = (e) => {
+      if ((e as any)?.error !== 'canceled' && (e as any)?.error !== 'interrupted') { console.warn('[WebSpeech] error:', (e as any)?.error || e); }
+      speaking.value = false
+      ttsEndedAt = Date.now()
+      ;(window as any).__activeUtterance = null
+    }
 
-  window.speechSynthesis.speak(utterance)
+    // Keep global reference so V8 GC does not kill utterance mid-speech (famous Chrome bug)
+    ;(window as any).__activeUtterance = utterance
+
+    window.speechSynthesis.speak(utterance)
+  }, 40)
 }
 
 /** Stop frontend audio playback immediately (call from outside useTTS, e.g. useResponse) */

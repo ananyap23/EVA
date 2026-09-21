@@ -57,6 +57,25 @@ export class HotkeyService extends BaseService {
     mainEventBus.on('config:changed', this.configHandler)
   }
 
+  private lastWindowToggleTime = 0
+  private lastMicToggleTime = 0
+
+  private emitWindowToggle(): void {
+    const now = Date.now()
+    if (now - this.lastWindowToggleTime < 400) return
+    this.lastWindowToggleTime = now
+    this.log.debug('Hotkey: toggle EVA-01')
+    mainEventBus.emit('hotkey:toggle-eva-01')
+  }
+
+  private emitMicToggle(): void {
+    const now = Date.now()
+    if (now - this.lastMicToggleTime < 400) return
+    this.lastMicToggleTime = now
+    this.log.debug('Hotkey: toggle mic command')
+    mainEventBus.emit('hotkey:toggle-mic')
+  }
+
   /** Register OS-level shortcuts through Electron's native RegisterHotKey */
   private registerGlobalShortcuts(windowHotkey: string, micHotkey: string): void {
     try {
@@ -65,8 +84,7 @@ export class HotkeyService extends BaseService {
       const windowAccel = (windowHotkey || 'Ctrl+Space').replace(/\bCtrl\b/i, 'CommandOrControl')
       const ok1 = globalShortcut.register(windowAccel, () => {
         this.log.info(`globalShortcut: ${windowAccel} triggered → toggle EVA-01`)
-        mainEventBus.emit('hotkey:toggle-eva-01')
-        mainEventBus.emit('hotkey:toggle-atlas')
+        this.emitWindowToggle()
       })
       this.log.info(`Registered OS global shortcut: ${windowAccel} (success: ${ok1})`)
 
@@ -74,7 +92,7 @@ export class HotkeyService extends BaseService {
         const micAccel = micHotkey.replace(/\bCtrl\b/i, 'CommandOrControl')
         const ok2 = globalShortcut.register(micAccel, () => {
           this.log.info(`globalShortcut: ${micAccel} triggered → toggle mic`)
-          mainEventBus.emit('hotkey:toggle-mic')
+          this.emitMicToggle()
         })
         this.log.info(`Registered OS global shortcut: ${micAccel} (success: ${ok2})`)
       }
@@ -174,9 +192,7 @@ export class HotkeyService extends BaseService {
         this.modifiers.meta === this.hotkey.meta &&
         e.keycode === this.hotkey.keycode
       ) {
-        this.log.debug(`Global hotkey: ${getConfig().hotkey} → toggle EVA-01`)
-        mainEventBus.emit('hotkey:toggle-eva-01')
-        mainEventBus.emit('hotkey:toggle-atlas')
+        this.emitWindowToggle()
       }
 
       // Check mic command hotkey combo match
@@ -188,8 +204,7 @@ export class HotkeyService extends BaseService {
         this.modifiers.meta === this.micHotkey.meta &&
         e.keycode === this.micHotkey.keycode
       ) {
-        this.log.debug('Global hotkey: toggle mic command')
-        mainEventBus.emit('hotkey:toggle-mic')
+        this.emitMicToggle()
       }
     }
 

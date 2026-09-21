@@ -139,7 +139,7 @@ export default defineComponent({
     const showProfile = this.subTab === 'profile'
 
     return (
-      <div class="settings-tab" style="display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+      <div class="settings-tab" style="display: flex; flex-direction: column; min-height: 100%; width: 100%;">
         <h2 class="settings-tab__title" style="flex-shrink: 0; align-self: flex-start;">Personas</h2>
         <p class="settings-tab__subtitle" style="align-self: flex-start;">Agent profiles, prompts, and memory</p>
 

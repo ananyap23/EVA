@@ -42,8 +42,8 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 function getMinLevel(): LogLevel {
   const env = process.env.LOG_LEVEL?.toLowerCase()
   if (env && env in LEVEL_PRIORITY) return env as LogLevel
-  // Default: debug in dev, info in production
-  return process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+  // Default to info so terminal stays clean and human-readable
+  return 'info'
 }
 
 function shouldLog(level: LogLevel): boolean {
@@ -170,7 +170,8 @@ export async function openLogFile(): Promise<void> {
 
 export function createLogger(scope: string): Logger {
   function format(level: string): string {
-    return `[${new Date().toISOString()}] [${level}] [${scope}]`
+    const time = new Date().toTimeString().split(' ')[0]
+    return `[${time}] [${level}] [${scope}]`
   }
 
   return {

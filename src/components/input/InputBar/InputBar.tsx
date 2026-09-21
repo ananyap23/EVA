@@ -1,12 +1,11 @@
 import { defineComponent, ref, nextTick, onMounted } from 'vue'
-import GlassInput from '@/components/core/GlassInput'
+import { PlusIcon, CloseIcon } from '@/components/core/AppleIcons'
 import './InputBar.css'
 
 /**
- * InputBar — text command input (fallback when user can't speak).
- *
- * - Type + Enter to submit
- * - Emits 'submit' on Enter, 'close' on Escape or submit
+ * Minimalist Apple Liquid Glass Input Capsule
+ * - [+ Ask AI] stadium pill text input
+ * - [✕] circular frosted glass dismiss button
  */
 export default defineComponent({
   name: 'InputBar',
@@ -36,48 +35,75 @@ export default defineComponent({
       if (e.key === 'Escape') {
         inputText.value = ''
         emit('close')
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        onSubmit()
       }
     }
 
     function focusInput() {
       nextTick(() => {
-        const el = inputRef.value as any
-        if (el?.$el) {
-          el.$el.focus()
-        } else if (el?.focus) {
-          el.focus()
-        }
+        inputRef.value?.focus()
       })
     }
 
     onMounted(focusInput)
 
-    return { inputText, inputRef, onSubmit, onKeydown, focusInput }
+    return {
+      inputText,
+      inputRef,
+      onSubmit,
+      onKeydown,
+      focusInput,
+    }
   },
 
   render() {
     return (
       <div
-        class={['input-bar glass-pill', this.visible ? 'animate-slide-up' : 'animate-slide-down']}
-        onKeydown={this.onKeydown}
+        class={[
+          'apple-input-cluster',
+          this.visible ? 'animate-slide-up' : 'animate-slide-down',
+        ]}
       >
-        <div class="input-bar__text">
-          <GlassInput
+        {/* [+ Ask AI] Main Stadium Capsule Pill */}
+        <div class="apple-glass-pill apple-ask-pill">
+          <span class="apple-ask-pill__plus">
+            <PlusIcon size={17} color="rgba(255, 255, 255, 0.7)" />
+          </span>
+          <input
             ref="inputRef"
-            modelValue={this.inputText}
-            placeholder="Type a command..."
-            class="input-bar__input"
-            onUpdate:modelValue={(v: string) => (this.inputText = v)}
-            onSubmit={this.onSubmit}
+            type="text"
+            class="apple-ask-pill__input"
+            placeholder="Ask AI or type command..."
+            value={this.inputText}
+            onInput={(e: any) => (this.inputText = e.target.value)}
+            onKeydown={this.onKeydown}
           />
-          <button
-            class="input-bar__submit-btn"
-            onClick={this.onSubmit}
-            title="Send command"
-          >
-            <span class="island__icon">arrow_upward</span>
-          </button>
+          {this.inputText.trim().length > 0 && (
+            <button
+              type="button"
+              class="apple-ask-pill__send-btn"
+              onClick={this.onSubmit}
+              title="Submit command (Enter)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
+            </button>
+          )}
         </div>
+
+        {/* [✕] Circular Glass Close Button */}
+        <button
+          type="button"
+          class="apple-glass-circle"
+          title="Dismiss input (Escape)"
+          onClick={() => this.$emit('close')}
+        >
+          <CloseIcon size={15} color="rgba(255, 255, 255, 0.78)" />
+        </button>
       </div>
     )
   },

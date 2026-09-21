@@ -24,6 +24,8 @@ import { IntelligenceService } from '@electron/services/intelligence/Intelligenc
 import { PromptLoader } from '@electron/services/intelligence/PromptLoader'
 import type { LLMMessage } from '@electron/services/intelligence/providers/BaseLLMProvider'
 import { VisionService } from '@electron/services/vision/VisionService'
+import { ScreenStateService, type ScreenState } from '@electron/services/vision/ScreenStateService'
+import { UIAutomationService, type UIAElement } from '@electron/services/vision/UIAutomationService'
 import { MotorService } from '@electron/services/motor/MotorService'
 import { SearchService } from '@electron/services/search/SearchService'
 
@@ -181,11 +183,28 @@ export async function runActionLoop(
       log.info(`Iteration ${iteration} (failures: ${consecutiveFailures}/${maxConsecutiveFailures})`)
 
     try {
+
+      // ── Hierarchical Screen State Engine Injection ──
+      const screenStateService = ScreenStateService.getInstance()
+      let effectiveSystemPrompt = systemPrompt
+      let screenState: ScreenState | null = null
+      try {
+        screenState = await screenStateService.getScreenState()
+        if (screenState) {
+          const stateBlock = screenStateService.formatStateForPrompt(screenState)
+          if (effectiveSystemPrompt && !effectiveSystemPrompt.includes('CURRENT DESKTOP STATE')) {
+            effectiveSystemPrompt = `${effectiveSystemPrompt}\n\n${stateBlock}`
+          }
+        }
+      } catch (err) {
+        log.warn(`[ScreenState] State extraction skipped: ${err}`)
+      }
+
       // Ask LLM for next action — structured output forces valid JSON
       const stopLLM = sessionLogger?.startTimer(`Iteration ${iteration} LLM call`)
       const llmResponse = screenshot
-        ? await intelligence.chatWithVisionStructured(messages, screenshot, actionJsonSchema, undefined, systemPrompt, cachedContent ?? undefined)
-        : await intelligence.chatStructured(messages, actionJsonSchema, undefined, systemPrompt, cachedContent ?? undefined)
+        ? await intelligence.chatWithVisionStructured(messages, screenshot, actionJsonSchema, undefined, effectiveSystemPrompt, cachedContent ?? undefined)
+        : await intelligence.chatStructured(messages, actionJsonSchema, undefined, effectiveSystemPrompt, cachedContent ?? undefined)
       stopLLM?.()
       screenshot = null
       log.debug(`LLM: ${llmResponse.slice(0, 200)}`)
@@ -321,6 +340,18 @@ export async function runActionLoop(
         }
 
         stateMachine.transition('USER_CONFIRM')
+      }
+
+
+      // ── UIA Exact Coordinate Snapping ──
+      if (action.action === 'click' || action.action === 'doubleClick' || action.action === 'rightClick') {
+        if (action.reason && screenState && screenState.elements.length > 0) {
+          const matched = screenStateService.resolveElementCoordinates(action.reason, screenState)
+          if (matched && (!action.coords || (action.coords[0] === 0 && action.coords[1] === 0))) {
+            log.info(`[ScreenState] Snapped coordinate to verified UIA target "${matched.name}" at (${matched.x}, ${matched.y})`)
+            action.coords = [matched.x, matched.y]
+          }
+        }
       }
 
       // ── Execute action ──

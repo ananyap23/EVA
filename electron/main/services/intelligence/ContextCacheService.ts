@@ -137,7 +137,11 @@ export class ContextCacheService {
     } catch (err) {
       // Graceful degradation — log and return null
       const msg = err instanceof Error ? err.message : String(err)
-      log.warn(`Cache creation failed (falling back to uncached): ${msg}`)
+      if (msg.includes('too small') || msg.includes('min_total_token_count')) {
+        log.debug(`Context cache skipped (content below minimum token threshold): ${msg}`)
+      } else {
+        log.warn(`Cache creation failed (falling back to uncached): ${msg}`)
+      }
       return null
     }
   }

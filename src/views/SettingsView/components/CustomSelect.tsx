@@ -3,6 +3,12 @@ import { defineComponent, ref, onMounted, onBeforeUnmount, Teleport, nextTick, t
 export interface SelectOption {
   value: string
   label: string
+  downloaded?: boolean
+  downloading?: boolean
+  sublabel?: string
+  icon?: string
+  iconColor?: string
+  iconBg?: string
 }
 
 /**
@@ -113,9 +119,22 @@ export default defineComponent({
         onKeydown={this.onKeydown}
       >
         <button class="custom-select__trigger" type="button" ref="triggerRef" onClick={this.toggle}>
-          <span class={['custom-select__label', !selected && 'custom-select__label--placeholder']}>
-            {selected?.label || this.placeholder}
-          </span>
+          <div class="custom-select__trigger-content">
+            {selected?.icon && (
+              <span
+                class="custom-select__badge"
+                style={{
+                  background: selected.iconBg || 'rgba(255, 255, 255, 0.08)',
+                  color: selected.iconColor || '#fff',
+                }}
+              >
+                {selected.icon}
+              </span>
+            )}
+            <span class={['custom-select__label', !selected && 'custom-select__label--placeholder']}>
+              {selected?.label || this.placeholder}
+            </span>
+          </div>
           <span class="custom-select__arrow">expand_more</span>
         </button>
 
@@ -133,10 +152,31 @@ export default defineComponent({
                   onClick={() => this.select(opt.value)}
                   onMouseenter={() => { this.focusedIndex = i }}
                 >
-                  {opt.label}
-                  {opt.value === this.modelValue && (
-                    <span class="custom-select__check">check</span>
+                  {opt.icon && (
+                    <span
+                      class="custom-select__badge"
+                      style={{
+                        background: opt.iconBg || 'rgba(255, 255, 255, 0.08)',
+                        color: opt.iconColor || '#fff',
+                      }}
+                    >
+                      {opt.icon}
+                    </span>
                   )}
+                  <div class="custom-select__option-content">
+                    <span class="custom-select__option-title">{opt.label}</span>
+                    {opt.sublabel && <span class="custom-select__option-sublabel">{opt.sublabel}</span>}
+                  </div>
+                  <div class="custom-select__option-meta">
+                    {opt.downloaded === false && (
+                      <span class="custom-select__download-icon" title="Download required">
+                        download
+                      </span>
+                    )}
+                    {opt.value === this.modelValue && (
+                      <span class="custom-select__check">check</span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

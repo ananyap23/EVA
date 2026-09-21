@@ -26,6 +26,9 @@ export const defaultConfig: AppConfig = {
     visionModel: '',
     separateVisionModel: false,
     classifierModel: '',
+    ollamaModel: 'qwen2.5vl:3b',
+    ollamaIdleMinutes: 5,
+    ollamaContextSize: 2048,
   },
   generation: {
     chatTemperature: 0.7,
@@ -36,6 +39,8 @@ export const defaultConfig: AppConfig = {
     visionMaxTokens: 1024,
   },
   tts: {
+    kokoroVoice: 'af_heart',
+    kokoroDtype: 'q8',
     provider: 'elevenlabs',
     apiKey: '',
     voiceId: 'JBFqnCBsd6RMkjVDRZzb',
@@ -48,6 +53,8 @@ export const defaultConfig: AppConfig = {
     accent: 'en-US',
   },
   stt: {
+    handyEndpoint: 'http://localhost:8000/v1',
+    groqApiKey: '',
     enabled: true,
     provider: 'hybrid',
     language: 'en',
@@ -57,7 +64,7 @@ export const defaultConfig: AppConfig = {
     whisperEndpoint: 'http://localhost:8080/v1',
     whisperApiKey: '',
     whisperModel: 'whisper-1',
-    inAppWhisperModel: 'Xenova/whisper-base.en',
+    inAppWhisperModel: 'Xenova/whisper-tiny.en',
   },
   agent: {
     maxIterations: 15,

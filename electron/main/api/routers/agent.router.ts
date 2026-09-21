@@ -1,3 +1,4 @@
+import { isSettingsActive } from '@electron/WindowManager'
 import { observable } from '@trpc/server/observable'
 import { z } from 'zod'
 import { trpcRouter, publicProcedure } from '@electron/api/context'

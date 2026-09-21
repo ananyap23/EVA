@@ -22,7 +22,7 @@ import { setGPUService } from './api/routers/system.router'
 import { createLogger } from './utils/logger'
 import { loadConfig } from './utils/config'
 import { mainEventBus } from './utils/eventBus'
-import { createWindow, toggleWindow, clearWindow } from './WindowManager'
+import { createWindow, toggleWindow, clearWindow, isSettingsActive } from './WindowManager'
 import { createTray } from './TrayManager'
 
 // Side-effect: sets process.env paths on import
@@ -112,12 +112,13 @@ app.whenReady().then(async () => {
   await createWindow()
   createTray(persona)
 
-  // Asynchronously pre-warm in-app Whisper pipeline for 0 cold-start latency
-  stt.prewarm().catch((err) => log.warn('STT pre-warm warning:', err))
+  // Defer STT pre-warm so main thread & initial tRPC IPC boot with 0 delay
+  setTimeout(() => {
+    stt.prewarm().catch((err) => log.warn('STT pre-warm warning:', err))
+  }, 8000)
 
   // Global hotkey → toggle window visibility
-  mainEventBus.on('hotkey:toggle-eva-01', () => toggleWindow())
-  mainEventBus.on('hotkey:toggle-atlas', () => toggleWindow())
+  mainEventBus.on('hotkey:toggle-eva-01', () => { if (!isSettingsActive()) toggleWindow() })
 
   log.info('EVA-01 ready')
 })

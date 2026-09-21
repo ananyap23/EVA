@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { AgentState, ActionData } from '@/types/agent'
 import { api } from '@/api'
+import { stopListening } from './useSTT'
 
 /**
  * useAgent — core agent state composable (singleton).
@@ -78,6 +79,7 @@ export function useAgent() {
     console.info('[useAgent] Terminate requested')
     api.agent.terminateProcess.mutate().catch(() => {})
     api.audio.stopSpeaking.mutate().catch(() => {})
+    stopListening()
     state.value = 'idle'
     currentAction.value = null
   }

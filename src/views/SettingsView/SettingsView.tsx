@@ -1,4 +1,4 @@
-import { defineComponent, ref, onMounted, type Ref } from 'vue'
+import { defineComponent, ref, onMounted, type PropType } from 'vue'
 import './SettingsView.css'
 import { useSettings, type AppConfig } from '@/composables/useSettings'
 import GeneralTab from './tabs/GeneralTab'
@@ -14,35 +14,72 @@ interface TabDef {
   id: TabId
   label: string
   icon: string
+  gradient: string
+  shadow: string
 }
 
 const TABS: TabDef[] = [
-  { id: 'general', label: 'General', icon: 'tune' },
-  { id: 'intelligence', label: 'Intelligence', icon: 'psychology' },
-  { id: 'voice', label: 'Voice', icon: 'graphic_eq' },
-  { id: 'agent', label: 'Agent', icon: 'smart_toy' },
-  { id: 'personas', label: 'Personas', icon: 'group' },
-  { id: 'about', label: 'About', icon: 'info' },
+  {
+    id: 'general',
+    label: 'General',
+    icon: 'tune',
+    gradient: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+    shadow: 'rgba(59, 130, 246, 0.45)',
+  },
+  {
+    id: 'intelligence',
+    label: 'Intelligence',
+    icon: 'neurology',
+    gradient: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+    shadow: 'rgba(168, 85, 247, 0.45)',
+  },
+  {
+    id: 'voice',
+    label: 'Voice & Audio',
+    icon: 'graphic_eq',
+    gradient: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+    shadow: 'rgba(6, 182, 212, 0.45)',
+  },
+  {
+    id: 'agent',
+    label: 'Agent & Tasks',
+    icon: 'smart_toy',
+    gradient: 'linear-gradient(135deg, #10b981, #059669)',
+    shadow: 'rgba(16, 185, 129, 0.45)',
+  },
+  {
+    id: 'personas',
+    label: 'Personas',
+    icon: 'badge',
+    gradient: 'linear-gradient(135deg, #f59e0b, #d97706)',
+    shadow: 'rgba(245, 158, 11, 0.45)',
+  },
+  {
+    id: 'about',
+    label: 'About EVA-01',
+    icon: 'info',
+    gradient: 'linear-gradient(135deg, #6366f1, #4338ca)',
+    shadow: 'rgba(99, 102, 241, 0.45)',
+  },
 ]
 
 /**
  * SettingsView — full-page settings panel.
- *
  * Full-page layout with sidebar navigation, 6 tabs.
- * Auto-saves on change (debounced 800ms).
+ * Auto-saves on change (debounced 1000ms).
  */
 export default defineComponent({
   name: 'SettingsView',
 
   props: {
     onClose: {
-      type: Function,
+      type: Function as PropType<() => void>,
       required: true,
     },
   },
 
   setup(props) {
-    const activeTab: Ref<TabId> = ref('general')
+    const activeTab = ref<TabId>('general')
 
     const {
       config,
@@ -66,52 +103,60 @@ export default defineComponent({
       }
     }
 
-    return {
-      activeTab,
-      config,
-      loading,
-      saving,
-      saved,
-      onUpdate,
-      onKeydown,
-    }
-  },
-
-  render() {
-    return (
-      <div class="settings-page" onKeydown={this.onKeydown} tabindex="-1">
+    return () => (
+      <div class="settings-page" onKeydown={onKeydown} tabindex="-1">
         {/* Sidebar */}
         <nav class="settings-nav">
-          <button class="settings-nav__back" onClick={() => this.onClose()}>
+          <button type="button" class="settings-nav__back" onClick={() => props.onClose()}>
             <span class="settings-nav__back-icon">arrow_back</span>
             <span>Settings</span>
           </button>
 
           <div class="settings-nav__tabs">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                class={[
-                  'settings-nav__tab',
-                  this.activeTab === tab.id && 'settings-nav__tab--active',
-                ]}
-                onClick={() => { this.activeTab = tab.id }}
-              >
-                <span class="settings-nav__tab-icon">{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
+            {TABS.map((tab) => {
+              const isActive = activeTab.value === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  class={[
+                    'settings-nav__tab',
+                    isActive && 'settings-nav__tab--active',
+                  ]}
+                  onClick={() => {
+                    activeTab.value = tab.id
+                  }}
+                >
+                  <span
+                    class="settings-nav__tab-badge"
+                    style={{
+                      background: tab.gradient,
+                      boxShadow: `0 2px 8px ${tab.shadow}`,
+                    }}
+                  >
+                    <span class="settings-nav__tab-icon">{tab.icon}</span>
+                  </span>
+                  <span class="settings-nav__tab-label">{tab.label}</span>
+                </button>
+              )
+            })}
           </div>
 
           {/* Footer: auto-save status */}
           <div class="settings-nav__footer">
-            {this.saving && (
+            {loading.value && (
+              <span class="settings-nav__status" style="color: oklch(0.6 0 0);">
+                <span class="settings-nav__status-icon" style="animation: settings-spin 1s linear infinite;">sync</span>
+                Loading…
+              </span>
+            )}
+            {!loading.value && saving.value && (
               <span class="settings-nav__status settings-nav__status--saving">
                 <span class="settings-nav__status-icon">sync</span>
                 Saving…
               </span>
             )}
-            {this.saved && (
+            {!loading.value && saved.value && (
               <span class="settings-nav__status settings-nav__status--saved">
                 <span class="settings-nav__status-icon">check_circle</span>
                 Saved
@@ -122,32 +167,23 @@ export default defineComponent({
 
         {/* Content */}
         <main class="settings-main">
-          {this.loading ? (
-            <div class="settings-loading">
-              <span class="settings-loading__icon">sync</span>
-              Loading settings…
-            </div>
-          ) : (
-            <>
-              {this.activeTab === 'general' && (
-                <GeneralTab config={this.config} onUpdate={this.onUpdate} onClose={() => this.onClose()} />
-              )}
-              {this.activeTab === 'intelligence' && (
-                <LLMTab config={this.config} onUpdate={this.onUpdate} />
-              )}
-              {this.activeTab === 'voice' && (
-                <VoiceTab config={this.config} onUpdate={this.onUpdate} />
-              )}
-              {this.activeTab === 'agent' && (
-                <AgentTab config={this.config} onUpdate={this.onUpdate} />
-              )}
-              {this.activeTab === 'personas' && (
-                <PersonasTab />
-              )}
-              {this.activeTab === 'about' && (
-                <AboutTab onClose={() => this.onClose()} />
-              )}
-            </>
+          {activeTab.value === 'general' && (
+            <GeneralTab config={config} onUpdate={onUpdate} onClose={props.onClose} />
+          )}
+          {activeTab.value === 'intelligence' && (
+            <LLMTab config={config} onUpdate={onUpdate} />
+          )}
+          {activeTab.value === 'voice' && (
+            <VoiceTab config={config} onUpdate={onUpdate} />
+          )}
+          {activeTab.value === 'agent' && (
+            <AgentTab config={config} onUpdate={onUpdate} />
+          )}
+          {activeTab.value === 'personas' && (
+            <PersonasTab />
+          )}
+          {activeTab.value === 'about' && (
+            <AboutTab onClose={props.onClose} />
           )}
         </main>
       </div>

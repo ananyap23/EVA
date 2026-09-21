@@ -1,3 +1,39 @@
+import * as path from 'node:path'
+import * as os from 'node:os'
+import * as fs from 'node:fs'
+
+export function isInAppWhisperDownloaded(modelName: string = 'Xenova/whisper-base.en'): boolean {
+  try {
+    const hfHome = process.env.HF_HOME || path.join(os.homedir(), '.cache', 'huggingface', 'hub')
+    const folderName = 'models--' + modelName.replace('/', '--')
+    const modelDir = path.join(hfHome, folderName)
+    if (!fs.existsSync(modelDir)) return false
+    const snapshotsDir = path.join(modelDir, 'snapshots')
+    if (!fs.existsSync(snapshotsDir)) return false
+    const snapshots = fs.readdirSync(snapshotsDir)
+    if (snapshots.length === 0) return false
+    const snapPath = path.join(snapshotsDir, snapshots[0])
+    const files = fs.readdirSync(snapPath)
+    return files.some((f) => f.endsWith('.onnx') || f.endsWith('.bin') || f.includes('model'))
+  } catch {
+    return false
+  }
+}
+
+let activeSTTAbort: AbortController | null = null
+
+export function cancelInAppSTTDownload(): void {
+  if (activeSTTAbort) {
+    activeSTTAbort.abort()
+    activeSTTAbort = null
+  }
+  mainEventBus.emit('stt:in-app-progress', {
+    model: 'in-app-whisper',
+    status: 'cancelled',
+    file: 'Download cancelled by user',
+    progress: 0,
+  })
+}
 import { BaseService } from '@electron/services/base/BaseService'
 import { getConfig } from '@electron/utils/config'
 import { mainEventBus } from '@electron/utils/eventBus'
@@ -75,18 +111,34 @@ export class STTService extends BaseService {
   private loadedModelName = ''
 
   /**
-   * Helper to convert 16kHz WAV buffer to Float32Array
+   * Helper to convert WAV buffer to 16kHz Float32Array
    */
   private wavToFloat32Array(buffer: Buffer): Float32Array {
     let offset = 0
+    let sampleRate = 16000
     if (buffer.length > 44 && buffer.toString('ascii', 0, 4) === 'RIFF') {
       offset = 44
+      sampleRate = buffer.readUInt32LE(24)
     }
     const sampleCount = Math.floor((buffer.length - offset) / 2)
     const float32 = new Float32Array(sampleCount)
     for (let i = 0; i < sampleCount; i++) {
       const int16 = buffer.readInt16LE(offset + i * 2)
       float32[i] = int16 < 0 ? int16 / 32768 : int16 / 32767
+    }
+    if (sampleRate !== 16000 && sampleRate > 0) {
+      // Resample to 16kHz for Xenova transformers pipeline
+      const ratio = sampleRate / 16000
+      const newLen = Math.round(float32.length / ratio)
+      const resampled = new Float32Array(newLen)
+      for (let i = 0; i < newLen; i++) {
+        const origIdx = i * ratio
+        const low = Math.floor(origIdx)
+        const high = Math.min(low + 1, float32.length - 1)
+        const weight = origIdx - low
+        resampled[i] = float32[low] * (1 - weight) + float32[high] * weight
+      }
+      return resampled
     }
     return float32
   }
@@ -103,7 +155,14 @@ export class STTService extends BaseService {
 
     if (!isWhisperUsed) return
 
-    const modelName = config.stt.inAppWhisperModel || 'Xenova/whisper-base.en'
+    let modelName = config.stt.inAppWhisperModel || 'Xenova/whisper-tiny.en'
+    if (modelName.includes('small') || modelName.includes('medium') || modelName.includes('large')) {
+      modelName = 'Xenova/whisper-tiny.en'
+    }
+    if (this.loadedModelName !== modelName) {
+      this.inAppPipeline = null
+      this.loadedModelName = modelName
+    }
     this.log.info(`Pre-warming in-app Whisper (${modelName})...`)
     try {
       const { pipeline, env } = await import('@xenova/transformers')
@@ -143,7 +202,10 @@ export class STTService extends BaseService {
    */
   async transcribeWithInAppWhisper(audioBuffer: Buffer, language?: string): Promise<string> {
     const config = getConfig()
-    const modelName = config.stt.inAppWhisperModel || 'Xenova/whisper-base.en'
+    let modelName = config.stt.inAppWhisperModel || 'Xenova/whisper-tiny.en'
+    if (modelName.includes('small') || modelName.includes('medium') || modelName.includes('large')) {
+      modelName = 'Xenova/whisper-tiny.en'
+    }
     const targetLang = language || (config.stt.language !== 'auto' ? config.stt.language : undefined)
 
     if (this.loadedModelName !== modelName) {
@@ -188,10 +250,12 @@ export class STTService extends BaseService {
     }
 
     const float32 = this.wavToFloat32Array(audioBuffer)
-    const output = await this.inAppPipeline(float32, {
-      language: targetLang,
-      task: 'transcribe',
-    })
+    const pipelineOpts: Record<string, any> = { task: 'transcribe' }
+    if (targetLang && !modelName.endsWith('.en')) {
+      pipelineOpts.language = targetLang
+    }
+
+    const output = await this.inAppPipeline(float32, pipelineOpts)
 
     const text = (output?.text || '').trim()
     this.log.info(`In-app Whisper result: "${text}"`)
@@ -203,9 +267,29 @@ export class STTService extends BaseService {
    */
   async transcribeAudio(audioBuffer: Buffer, language?: string): Promise<string> {
     const config = getConfig()
-    const endpoint = config.stt.whisperEndpoint || 'http://localhost:8080/v1'
-    const model = config.stt.whisperModel || 'whisper-1'
-    const targetLang = language || (config.stt.language !== 'auto' ? config.stt.language : undefined)
+
+    let endpoint = config.stt.whisperEndpoint || 'http://localhost:8080/v1'
+    let model = config.stt.whisperModel || 'whisper-1'
+    let apiKey = config.stt.whisperApiKey || 'offline-whisper'
+
+    // Handy local server preset
+    if (config.stt.provider === 'handy') {
+      endpoint = config.stt.handyEndpoint || 'http://localhost:8000/v1'
+      model = config.stt.whisperModel || 'whisper-1'
+    }
+
+    // Groq Cloud Whisper preset
+    if (config.stt.provider === 'groq-whisper') {
+      endpoint = 'https://api.groq.com/openai/v1'
+      model = config.stt.whisperModel || 'whisper-large-v3-turbo'
+      apiKey = config.stt.groqApiKey || config.stt.whisperApiKey || ''
+    } else if (config.stt.provider === 'faster-whisper') {
+      endpoint = config.stt.whisperEndpoint || 'http://localhost:8080/v1'
+      model = config.stt.whisperModel || 'whisper-1'
+    }
+    const rawLang = language || (config.stt.language !== 'auto' ? config.stt.language : undefined)
+    // Normalize regional language codes to standard ISO 639-1 2-letter codes (e.g. 'en-in', 'en-US' -> 'en', 'hi-IN' -> 'hi')
+    const targetLang = rawLang && rawLang !== 'auto' ? rawLang.split(/[-_]/)[0].toLowerCase() : undefined
 
     // Route to in-app Whisper if in-app-whisper, hybrid, or endpoint is in-app
     if (config.stt.provider === 'in-app-whisper' || config.stt.provider === 'hybrid' || endpoint === 'in-app') {
@@ -218,7 +302,7 @@ export class STTService extends BaseService {
       const { default: OpenAI, toFile } = await import('openai')
       const client = new OpenAI({
         baseURL: endpoint,
-        apiKey: config.stt.whisperApiKey || 'offline-whisper',
+        apiKey: apiKey || 'offline-whisper',
         dangerouslyAllowBrowser: false,
       })
 
@@ -248,37 +332,85 @@ export class STTService extends BaseService {
   /**
    * Test connectivity to offline Whisper endpoint or in-app model.
    */
-  async testWhisperConnection(endpointInput?: string, apiKeyInput?: string): Promise<{ ok: boolean; error?: string; message?: string }> {
+  async testWhisperConnection(endpointInput?: string, apiKeyInput?: string, modelInput?: string): Promise<{ ok: boolean; error?: string; message?: string }> {
     const config = getConfig()
-    const endpoint = (endpointInput || config.stt.whisperEndpoint || 'http://localhost:8080/v1').replace(/\/+$/, '')
-    const apiKey = apiKeyInput || config.stt.whisperApiKey
+    let endpoint = (endpointInput || config.stt.whisperEndpoint || 'http://localhost:8080/v1').replace(/\/+$/, '')
+    let apiKey = apiKeyInput || config.stt.whisperApiKey
 
-    const isTestingInApp = endpoint === 'in-app' || (!endpointInput && config.stt.provider === 'in-app-whisper')
+    if (endpointInput === 'groq' || (!endpointInput && config.stt.provider === 'groq-whisper')) {
+      endpoint = 'https://api.groq.com/openai/v1'
+      apiKey = apiKeyInput || config.stt.groqApiKey || config.stt.whisperApiKey
+    }
+
+    const isTestingInApp = endpoint === 'in-app' || (!endpointInput && (config.stt.provider === 'in-app-whisper' || config.stt.provider === 'hybrid')) || (!!modelInput && endpoint !== 'https://api.groq.com/openai/v1')
 
     if (isTestingInApp) {
+      const modelName = modelInput || config.stt.inAppWhisperModel || 'Xenova/whisper-base.en'
+      this.log.info(`Testing / downloading in-app STT model: ${modelName}`)
+
+      activeSTTAbort = new AbortController()
+      mainEventBus.emit('stt:in-app-progress', {
+        model: modelName,
+        status: 'downloading',
+        progress: 5,
+        file: 'Connecting to Hugging Face...',
+      })
+
       try {
         const { pipeline, env } = await import('@xenova/transformers')
         env.allowLocalModels = true
         env.allowRemoteModels = true
-        const modelName = config.stt.inAppWhisperModel || 'Xenova/whisper-base.en'
-        if (!this.inAppPipeline) {
-          try {
-            this.inAppPipeline = await pipeline('automatic-speech-recognition', modelName, {
-              quantized: true,
-            })
-          } catch (loadErr) {
-            this.log.warn(`Failed loading ${modelName}, falling back to tiny:`, loadErr)
-            this.inAppPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
-              quantized: true,
-            })
-          }
+        const os = await import('node:os')
+        const cpus = os.cpus().length
+        if (env.backends?.onnx?.wasm) {
+          env.backends.onnx.wasm.numThreads = Math.max(1, Math.min(8, cpus))
         }
-        // Run a dummy 0.5s silence test to verify onnx execution
-        const dummy = new Float32Array(16000 * 0.5)
+
+        if (this.loadedModelName !== modelName || !this.inAppPipeline) {
+          this.inAppPipeline = null
+          this.loadedModelName = modelName
+
+          this.inAppPipeline = await pipeline('automatic-speech-recognition', modelName, {
+            quantized: true,
+            progress_callback: (info: any) => {
+              if (activeSTTAbort?.signal.aborted) throw new Error('Download cancelled')
+              if (info) {
+                const progressPct = info.progress !== undefined ? Math.round(info.progress) : (info.status === 'done' ? 100 : 0)
+                mainEventBus.emit('stt:in-app-progress', {
+                  model: modelName,
+                  file: info.file || 'model_quantized.onnx',
+                  progress: progressPct,
+                  loaded: info.loaded,
+                  total: info.total,
+                  status: info.status || 'downloading',
+                })
+              }
+            },
+          })
+        }
+
+        // Test with 0.2s silence
+        const dummy = new Float32Array(16000 * 0.2)
         await this.inAppPipeline(dummy)
-        return { ok: true, message: `In-App Whisper Engine Ready (${modelName.replace('Xenova/', '')})` }
-      } catch (err) {
-        return { ok: false, error: (err as Error).message || 'Failed to initialize in-app Whisper' }
+
+        mainEventBus.emit('stt:in-app-progress', {
+          model: modelName,
+          status: 'ready',
+          progress: 100,
+          file: 'Model Ready & Cached',
+        })
+
+        return { ok: true, message: `Ready (${modelName.replace('Xenova/', '')})` }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err)
+        this.log.error('In-app Whisper test/download failed:', err)
+        mainEventBus.emit('stt:in-app-progress', {
+          model: modelName,
+          status: 'error',
+          file: message,
+          progress: 0,
+        })
+        return { ok: false, error: message }
       }
     }
 
