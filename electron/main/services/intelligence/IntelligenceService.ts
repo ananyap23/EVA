@@ -85,17 +85,21 @@ export class IntelligenceService extends BaseService {
     } else {
       const isGemini = config.llm.provider === 'gemini'
       const sanitizeModelForProvider = (m?: string, defaultModel?: string): string => {
-        if (!m) return defaultModel || (isGemini ? 'gemini-2.5-flash' : 'gpt-4o')
+        if (!m) return defaultModel || (isGemini ? 'gemini-3.6-flash' : 'gpt-4o')
         if (isGemini) {
           const lower = m.toLowerCase()
-          if (lower.includes('qwen') || lower.includes('llama') || lower.includes('mistral') || lower.includes('deepseek') || lower.includes('phi') || (lower.includes(':') && !lower.startsWith('gemini'))) {
-            return defaultModel || 'gemini-2.5-flash'
+          if (
+            lower.includes('qwen') || lower.includes('llama') || lower.includes('mistral') ||
+            lower.includes('deepseek') || lower.includes('phi') || (lower.includes(':') && !lower.startsWith('gemini')) ||
+            lower === 'gemini-2.5-flash' || lower === 'gemini-3.8-flash'
+          ) {
+            return defaultModel || 'gemini-3.6-flash'
           }
         }
         return m
       }
 
-      const textModelName = sanitizeModelForProvider(config.llm.textModel, 'gemini-2.5-flash')
+      const textModelName = sanitizeModelForProvider(config.llm.textModel, 'gemini-3.6-flash')
       const visionModelName = config.llm.separateVisionModel
         ? sanitizeModelForProvider(config.llm.visionModel, textModelName)
         : textModelName

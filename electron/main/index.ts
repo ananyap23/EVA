@@ -44,9 +44,22 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0)
 }
 
+import * as fs from 'node:fs'
+import { pathToFileURL } from 'node:url'
+
 // Register custom protocol for serving STT model files to renderer
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'stt-model', privileges: { bypassCSP: true, supportFetchAPI: true } },
+  {
+    scheme: 'stt-model',
+    privileges: {
+      standard: true,
+      secure: true,
+      bypassCSP: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
 ])
 
 // ── Service Registry ──
@@ -61,12 +74,62 @@ app.whenReady().then(async () => {
   loadConfig()
 
   // Serve STT model files to renderer via custom protocol (file:// is blocked)
-  // URL format: stt-model://ru/am/final.mdl → {userData}/Models/stt/ru/am/final.mdl
+  // URL format: stt-model://en.zip → {userData}/Models/stt/en.zip
   const sttModelsDir = path.join(app.getPath('userData'), 'Models', 'stt')
-  protocol.handle('stt-model', (req) => {
-    const relative = decodeURIComponent(req.url.slice('stt-model://'.length))
+  protocol.handle('stt-model', async (req) => {
+    let relative = ''
+    try {
+      const parsed = new URL(req.url)
+      relative = decodeURIComponent(parsed.pathname ? parsed.pathname.replace(/^\/+/, '') : parsed.host)
+      if (!relative || relative === '/') {
+        relative = decodeURIComponent(parsed.host)
+      }
+    } catch {
+      relative = decodeURIComponent(req.url.replace(/^stt-model:\/\//, '').replace(/^\/+/, ''))
+    }
+
     const filePath = path.join(sttModelsDir, relative)
-    return net.fetch(`file:///${filePath.replace(/\\/g, '/')}`)
+    log.info(`[stt-model] Handling request for: ${req.url} -> ${filePath}`)
+    if (!fs.existsSync(filePath)) {
+      log.warn(`[stt-model] Model file not found on disk: ${filePath}`)
+      return new Response('STT Model file not found', {
+        status: 404,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+        },
+      })
+    }
+
+    try {
+      const res = await net.fetch(pathToFileURL(filePath).toString())
+      const headers = new Headers(res.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+      headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+      headers.set('Access-Control-Allow-Headers', '*')
+      headers.set('Access-Control-Expose-Headers', '*')
+      headers.set('Content-Type', 'application/zip')
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      })
+    } catch (fetchErr) {
+      log.warn(`[stt-model] net.fetch fallback to file stream for ${filePath}:`, fetchErr)
+      const fileBuffer = fs.readFileSync(filePath)
+      return new Response(fileBuffer, {
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Access-Control-Expose-Headers': '*',
+          'Content-Type': 'application/zip',
+          'Content-Length': String(fileBuffer.length),
+        },
+      })
+    }
   })
 
   // Register services (order matters: dependencies first)

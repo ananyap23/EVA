@@ -55,11 +55,11 @@ export class GeminiProvider extends BaseLLMProvider {
     
     let sanitized = model
     if (!model || isNonGemini) {
-      sanitized = 'gemini-2.5-flash'
+      sanitized = 'gemini-3.6-flash'
       log.warn(`[Gemini] Invalid or non-Gemini model name "${model}" — defaulting to "${sanitized}"`)
-    } else if (m === 'gemini-3.5-flash-lite' || m === 'gemini-3.5-flash' || m === 'gemini-3-flash-lite') {
-      sanitized = 'gemini-2.5-flash'
-      log.warn(`[Gemini] Non-existent Gemini model "${model}" — falling back to "${sanitized}"`)
+    } else if (m === 'gemini-3.5-flash-lite' || m === 'gemini-3-flash-lite' || m === 'gemini-2.5-flash' || m === 'gemini-3.8-flash') {
+      sanitized = 'gemini-3.6-flash'
+      log.warn(`[Gemini] Model "${model}" experiencing high demand or deprecated — defaulting to "${sanitized}"`)
     }
 
     this.model = sanitized
@@ -89,6 +89,67 @@ export class GeminiProvider extends BaseLLMProvider {
     }
   }
 
+  /**
+   * Helper to execute Gemini API calls with automatic fallbacks:
+   * 1. If `cachedContent` is rejected (e.g. 429 quota on free tier, 400 invalid, 404 expired), retry uncached using systemInstruction.
+   * 2. If model returns 503 (high demand), 404 (not found), or 429, fallback to gemini-3.6-flash.
+   */
+  private async executeWithFallback<T>(
+    methodName: string,
+    cachedContent: string | undefined,
+    systemInstruction: string | undefined,
+    fn: (model: string, configExtra: { cachedContent?: string; systemInstruction?: string }) => Promise<T>
+  ): Promise<T> {
+    let modelToUse = this.model
+    const useCache = Boolean(cachedContent)
+
+    try {
+      const configExtra = useCache ? { cachedContent } : { systemInstruction }
+      return await fn(modelToUse, configExtra)
+    } catch (primaryErr: any) {
+      log.warn(`[Gemini] ${methodName} primary attempt failed (model=${modelToUse}, cached=${useCache}): ${primaryErr?.message || primaryErr}`)
+
+      // Fallback 1: Retry without cachedContent if cachedContent was present
+      let secondErr = primaryErr
+      if (useCache) {
+        log.warn(`[Gemini] Retrying ${methodName} without cachedContent...`)
+        try {
+          return await fn(modelToUse, { systemInstruction })
+        } catch (err2: any) {
+          secondErr = err2
+        }
+      }
+
+      // Fallback 2: Fallback model to gemini-3.6-flash if current model is unavailable / high demand / not found
+      const errStr = String(secondErr?.message || secondErr)
+      const isUnavailable =
+        secondErr?.status === 503 ||
+        secondErr?.status === 404 ||
+        secondErr?.status === 429 ||
+        errStr.includes('503') ||
+        errStr.includes('404') ||
+        errStr.includes('429') ||
+        errStr.includes('UNAVAILABLE') ||
+        errStr.includes('NOT_FOUND') ||
+        errStr.includes('high demand') ||
+        errStr.includes('quota') ||
+        errStr.includes('RESOURCE_EXHAUSTED')
+
+      if (isUnavailable && modelToUse !== 'gemini-3.6-flash') {
+        log.warn(`[Gemini] Model "${modelToUse}" unavailable/busy (${secondErr?.status || 'error'}) — automatically falling back to gemini-3.6-flash`)
+        this.model = 'gemini-3.6-flash'
+        modelToUse = 'gemini-3.6-flash'
+        try {
+          return await fn(modelToUse, { systemInstruction })
+        } catch (err3: any) {
+          handleError(`${methodName} fallback`, err3)
+        }
+      }
+
+      handleError(methodName, secondErr)
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   //  Public API
   // ═══════════════════════════════════════════════════════════════
@@ -102,23 +163,20 @@ export class GeminiProvider extends BaseLLMProvider {
    */
   async chat(messages: LLMMessage[], config?: GenerationConfig, systemInstruction?: string, cachedContent?: string): Promise<string> {
     log.debug(`chat() with ${messages.length} message(s)${cachedContent ? ' (cached)' : ''}`)
-
-    try {
+    return this.executeWithFallback('chat()', cachedContent, systemInstruction, async (model, configExtra) => {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents: this.toContents(messages),
         config: {
           ...this.toGeminiConfig(config),
-          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+          ...configExtra,
         },
       })
 
       const text = response.text ?? ''
       log.debug(`chat() response length: ${text.length}`)
       return text
-    } catch (err) {
-      handleError('chat()', err)
-    }
+    })
   }
 
   /**
@@ -131,14 +189,51 @@ export class GeminiProvider extends BaseLLMProvider {
   async *stream(messages: LLMMessage[], config?: GenerationConfig, systemInstruction?: string, cachedContent?: string): AsyncGenerator<string> {
     log.debug(`stream() with ${messages.length} message(s)${cachedContent ? ' (cached)' : ''}`)
 
-    const response = await this.client.models.generateContentStream({
-      model: this.model,
-      contents: this.toContents(messages),
-      config: {
-        ...this.toGeminiConfig(config),
-        ...(cachedContent ? { cachedContent } : { systemInstruction }),
-      },
-    }).catch((err) => handleError('stream()', err))
+    let modelToUse = this.model
+    let response: any
+
+    try {
+      response = await this.client.models.generateContentStream({
+        model: modelToUse,
+        contents: this.toContents(messages),
+        config: {
+          ...this.toGeminiConfig(config),
+          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+        },
+      })
+    } catch (primaryErr: any) {
+      let activeErr = primaryErr
+      log.warn(`[Gemini] stream() primary attempt failed: ${primaryErr?.message || primaryErr}`)
+      if (cachedContent) {
+        try {
+          response = await this.client.models.generateContentStream({
+            model: modelToUse,
+            contents: this.toContents(messages),
+            config: {
+              ...this.toGeminiConfig(config),
+              systemInstruction,
+            },
+          })
+        } catch (err2) {
+          activeErr = err2
+        }
+      }
+
+      if (!response && modelToUse !== 'gemini-3.6-flash') {
+        log.warn(`[Gemini] Falling back stream() to gemini-3.6-flash`)
+        this.model = 'gemini-3.6-flash'
+        response = await this.client.models.generateContentStream({
+          model: 'gemini-3.6-flash',
+          contents: this.toContents(messages),
+          config: {
+            ...this.toGeminiConfig(config),
+            systemInstruction,
+          },
+        }).catch((err) => handleError('stream() fallback', err))
+      } else if (!response) {
+        handleError('stream()', activeErr)
+      }
+    }
 
     try {
       for await (const chunk of response) {
@@ -167,16 +262,55 @@ export class GeminiProvider extends BaseLLMProvider {
     log.debug(`streamWithThoughts() with ${messages.length} message(s)${cachedContent ? ' (cached)' : ''}`)
 
     const geminiConfig = this.toGeminiConfig(config) ?? {}
+    let modelToUse = this.model
+    let response: any
 
-    const response = await this.client.models.generateContentStream({
-      model: this.model,
-      contents: this.toContents(messages),
-      config: {
-        ...geminiConfig,
-        thinkingConfig: { includeThoughts: true },
-        ...(cachedContent ? { cachedContent } : { systemInstruction }),
-      },
-    }).catch((err) => handleError('streamWithThoughts()', err))
+    try {
+      response = await this.client.models.generateContentStream({
+        model: modelToUse,
+        contents: this.toContents(messages),
+        config: {
+          ...geminiConfig,
+          thinkingConfig: { includeThoughts: true },
+          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+        },
+      })
+    } catch (primaryErr: any) {
+      let activeErr = primaryErr
+      log.warn(`[Gemini] streamWithThoughts() primary attempt failed (model=${modelToUse}): ${primaryErr?.message || primaryErr}`)
+      if (cachedContent) {
+        log.warn(`[Gemini] Retrying streamWithThoughts() without cachedContent...`)
+        try {
+          response = await this.client.models.generateContentStream({
+            model: modelToUse,
+            contents: this.toContents(messages),
+            config: {
+              ...geminiConfig,
+              thinkingConfig: { includeThoughts: true },
+              systemInstruction,
+            },
+          })
+        } catch (err2: any) {
+          activeErr = err2
+        }
+      }
+
+      if (!response && modelToUse !== 'gemini-3.6-flash') {
+        log.warn(`[Gemini] Model "${modelToUse}" failed — automatically falling back to gemini-3.6-flash`)
+        this.model = 'gemini-3.6-flash'
+        response = await this.client.models.generateContentStream({
+          model: 'gemini-3.6-flash',
+          contents: this.toContents(messages),
+          config: {
+            ...geminiConfig,
+            thinkingConfig: { includeThoughts: true },
+            systemInstruction,
+          },
+        }).catch((err) => handleError('streamWithThoughts() fallback', err))
+      } else if (!response) {
+        handleError('streamWithThoughts()', activeErr)
+      }
+    }
 
     try {
       for await (const chunk of response) {
@@ -209,10 +343,9 @@ export class GeminiProvider extends BaseLLMProvider {
    */
   async vision(image: Buffer, prompt: string, config?: GenerationConfig): Promise<string> {
     log.debug(`vision() image=${image.length} bytes, prompt="${prompt.slice(0, 60)}..."`)
-
-    try {
+    return this.executeWithFallback('vision()', undefined, undefined, async (model, configExtra) => {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents: [{
           role: 'user',
           parts: [
@@ -220,15 +353,16 @@ export class GeminiProvider extends BaseLLMProvider {
             { text: prompt },
           ],
         }],
-        config: this.toGeminiConfig(config),
+        config: {
+          ...this.toGeminiConfig(config),
+          ...configExtra,
+        },
       })
 
       const text = response.text ?? ''
       log.debug(`vision() response length: ${text.length}`)
       return text
-    } catch (err) {
-      handleError('vision()', err)
-    }
+    })
   }
 
   /**
@@ -246,40 +380,37 @@ export class GeminiProvider extends BaseLLMProvider {
   async chatWithVision(messages: LLMMessage[], image: Buffer, config?: GenerationConfig, systemInstruction?: string, cachedContent?: string): Promise<string> {
     log.debug(`chatWithVision() ${messages.length} message(s), image=${image.length} bytes${cachedContent ? ' (cached)' : ''}`)
 
-    // Convert messages to Gemini Content, adding image to the last user message
-    const contents = messages.map((m, index) => {
-      const isLastUser = m.role === 'user' && index === messages.length - 1
-      const role = m.role === 'model' ? ('model' as const) : ('user' as const)
+    return this.executeWithFallback('chatWithVision()', cachedContent, systemInstruction, async (model, configExtra) => {
+      const contents = messages.map((m, index) => {
+        const isLastUser = m.role === 'user' && index === messages.length - 1
+        const role = m.role === 'model' ? ('model' as const) : ('user' as const)
 
-      if (isLastUser) {
-        return {
-          role,
-          parts: [
-            { inlineData: { mimeType: 'image/jpeg' as const, data: image.toString('base64') } },
-            { text: m.text },
-          ],
+        if (isLastUser) {
+          return {
+            role,
+            parts: [
+              { inlineData: { mimeType: 'image/jpeg' as const, data: image.toString('base64') } },
+              { text: m.text },
+            ],
+          }
         }
-      }
 
-      return { role, parts: [{ text: m.text }] }
-    })
+        return { role, parts: [{ text: m.text }] }
+      })
 
-    try {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents,
         config: {
           ...this.toGeminiConfig(config),
-          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+          ...configExtra,
         },
       })
 
       const text = response.text ?? ''
       log.debug(`chatWithVision() response length: ${text.length}`)
       return text
-    } catch (err) {
-      handleError('chatWithVision()', err)
-    }
+    })
   }
 
   /**
@@ -297,24 +428,22 @@ export class GeminiProvider extends BaseLLMProvider {
   async chatStructured(messages: LLMMessage[], jsonSchema: Record<string, unknown>, config?: GenerationConfig, systemInstruction?: string, cachedContent?: string): Promise<string> {
     log.debug(`chatStructured() with ${messages.length} message(s)${cachedContent ? ' (cached)' : ''}`)
 
-    try {
+    return this.executeWithFallback('chatStructured()', cachedContent, systemInstruction, async (model, configExtra) => {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents: this.toContents(messages),
         config: {
           ...this.toGeminiConfig(config),
           responseMimeType: 'application/json',
           responseJsonSchema: jsonSchema,
-          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+          ...configExtra,
         },
       })
 
       const text = response.text ?? ''
       log.debug(`chatStructured() response length: ${text.length}`)
       return text
-    } catch (err) {
-      handleError('chatStructured()', err)
-    }
+    })
   }
 
   /**
@@ -333,47 +462,40 @@ export class GeminiProvider extends BaseLLMProvider {
   async chatWithVisionStructured(messages: LLMMessage[], image: Buffer, jsonSchema: Record<string, unknown>, config?: GenerationConfig, systemInstruction?: string, cachedContent?: string): Promise<string> {
     log.debug(`chatWithVisionStructured() ${messages.length} message(s), image=${image.length} bytes${cachedContent ? ' (cached)' : ''}`)
 
-    // Build contents with image on last user message
-    const contents = messages.map((m, index) => {
-      const isLastUser = m.role === 'user' && index === messages.length - 1
-      const role = m.role === 'model' ? ('model' as const) : ('user' as const)
+    return this.executeWithFallback('chatWithVisionStructured()', cachedContent, systemInstruction, async (model, configExtra) => {
+      const contents = messages.map((m, index) => {
+        const isLastUser = m.role === 'user' && index === messages.length - 1
+        const role = m.role === 'model' ? ('model' as const) : ('user' as const)
 
-      if (isLastUser) {
-        return {
-          role,
-          parts: [
-            { inlineData: { mimeType: 'image/jpeg' as const, data: image.toString('base64') } },
-            { text: m.text },
-          ],
+        if (isLastUser) {
+          return {
+            role,
+            parts: [
+              { inlineData: { mimeType: 'image/jpeg' as const, data: image.toString('base64') } },
+              { text: m.text },
+            ],
+          }
         }
-      }
 
-      return { role, parts: [{ text: m.text }] }
-    })
+        return { role, parts: [{ text: m.text }] }
+      })
 
-    try {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents,
         config: {
           ...this.toGeminiConfig(config),
           responseMimeType: 'application/json',
           responseJsonSchema: jsonSchema,
-          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+          ...configExtra,
         },
       })
 
       const text = response.text ?? ''
       log.debug(`chatWithVisionStructured() response length: ${text.length}`)
       return text
-    } catch (err) {
-      handleError('chatWithVisionStructured()', err)
-    }
+    })
   }
-
-  // ═══════════════════════════════════════════════════════════════
-  //  Computer Use (Google Native Screen Control)
-  // ═══════════════════════════════════════════════════════════════
 
   /**
    * Computer Use: send conversation with screenshot, using Gemini's native
@@ -396,25 +518,12 @@ export class GeminiProvider extends BaseLLMProvider {
   ) {
     log.debug(`chatWithComputerUse() ${contents.length} content(s)${cachedContent ? ' (cached)' : ''}`)
 
-    // Log contents structure for debugging
-    for (let i = 0; i < contents.length; i++) {
-      const c = contents[i] as { role: string; parts: Array<Record<string, unknown>> }
-      const partSummary = c.parts.map(p => {
-        if (p.text) return `text(${(p.text as string).length}ch)`
-        if (p.functionCall) return `functionCall(${(p.functionCall as Record<string,unknown>).name})`
-        if (p.functionResponse) return `functionResponse(${(p.functionResponse as Record<string,unknown>).name})`
-        if (p.inlineData) return 'inlineData'
-        return Object.keys(p).join(',')
-      }).join(', ')
-      log.debug(`  content[${i}] role=${c.role} parts=[${partSummary}]`)
-    }
-
-    try {
+    return this.executeWithFallback('chatWithComputerUse()', cachedContent, systemInstruction, async (model, configExtra) => {
       const response = await this.client.models.generateContent({
-        model: this.model,
+        model,
         contents,
         config: {
-          ...(cachedContent ? { cachedContent } : { systemInstruction }),
+          ...configExtra,
           tools: [{
             computerUse: {
               environment: Environment.ENVIRONMENT_BROWSER,
@@ -426,16 +535,6 @@ export class GeminiProvider extends BaseLLMProvider {
 
       log.debug(`chatWithComputerUse() candidates: ${response.candidates?.length ?? 0}`)
       return response
-    } catch (err: unknown) {
-      // Log raw API error details before wrapping
-      const raw = err as Record<string, unknown>
-      log.error(`chatWithComputerUse() RAW error:`, JSON.stringify({
-        message: raw.message,
-        status: raw.status,
-        statusText: raw.statusText,
-        errorDetails: raw.errorDetails,
-      }, null, 2))
-      handleError('chatWithComputerUse()', err)
-    }
+    })
   }
 }

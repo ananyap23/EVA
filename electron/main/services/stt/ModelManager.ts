@@ -46,6 +46,19 @@ const MODEL_URLS: Record<string, string> = {
   ar: 'https://alphacephei.com/vosk/models/vosk-model-small-ar-tn-0.1-linto.zip',
 }
 
+const MODEL_FALLBACK_URLS: Record<string, string> = {
+  en: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip',
+  'en-in': 'https://huggingface.co/rhasspy/vosk-models/resolve/main/en-in/vosk-model-small-en-in-0.4.zip',
+  hi: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/hi/vosk-model-small-hi-0.22.zip',
+  de: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/de/vosk-model-small-de-0.15.zip',
+  fr: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/fr/vosk-model-small-fr-0.22.zip',
+  es: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/es/vosk-model-small-es-0.42.zip',
+  ru: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/ru/vosk-model-small-ru-0.22.zip',
+  it: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/it/vosk-model-small-it-0.22.zip',
+  nl: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/nl/vosk-model-small-nl-0.22.zip',
+  pt: 'https://huggingface.co/rhasspy/vosk-models/resolve/main/pt/vosk-model-small-pt-0.3.zip',
+}
+
 /** Root directory for STT models */
 function modelsRoot(): string {
   return path.join(app.getPath('userData'), 'Models', 'stt')
@@ -63,7 +76,14 @@ export function modelArchivePath(language: string): string {
 
 /** Check if a model is downloaded for the given language */
 export function isModelDownloaded(language: string): boolean {
-  return fs.existsSync(modelArchivePath(language))
+  const p = modelArchivePath(language)
+  if (!fs.existsSync(p)) return false
+  try {
+    const stat = fs.statSync(p)
+    return stat.size > 10 * 1024 * 1024 // Model zip must be at least 10MB
+  } catch {
+    return false
+  }
 }
 
 /** Get model status for a language */
@@ -79,8 +99,9 @@ export function getModelStatus(language: string): { downloaded: boolean; path: s
  * Emits progress via mainEventBus.
  */
 export async function downloadModel(language: string): Promise<void> {
-  const url = MODEL_URLS[language]
-  if (!url) {
+  const primaryUrl = MODEL_URLS[language]
+  const fallbackUrl = MODEL_FALLBACK_URLS[language]
+  if (!primaryUrl && !fallbackUrl) {
     throw new Error(`No Vosk model available for language: ${language}`)
   }
 
@@ -88,28 +109,53 @@ export async function downloadModel(language: string): Promise<void> {
   fs.mkdirSync(root, { recursive: true })
 
   const zipPath = path.join(root, `${language}.zip`)
+  const tmpPath = path.join(root, `${language}.zip.tmp`)
 
   mainEventBus.emit('stt:model-status', { downloaded: false, progress: 0 })
-  log.info(`Downloading Vosk model for '${language}' from ${url}`)
 
-  try {
-    // Download with progress tracking
-    await downloadFile(url, zipPath, (progress) => {
+  const tryDownload = async (url: string) => {
+    log.info(`Downloading Vosk model for '${language}' from ${url}`)
+    await downloadFile(url, tmpPath, (progress) => {
       mainEventBus.emit('stt:model-status', { downloaded: false, progress })
     })
+  }
 
-    // Extract zip (for local use if needed)
-    log.info('Extracting model...')
-    mainEventBus.emit('stt:model-status', { downloaded: false, progress: 95 })
-    await extractZip(zipPath, root, language)
+  try {
+    try {
+      await tryDownload(primaryUrl || fallbackUrl!)
+    } catch (primaryErr) {
+      if (fallbackUrl && fallbackUrl !== primaryUrl) {
+        log.warn(`Primary download failed for '${language}', attempting fallback mirror:`, primaryErr)
+        await tryDownload(fallbackUrl)
+      } else {
+        throw primaryErr
+      }
+    }
 
-    // Keep zip — vosk-browser loads it directly via protocol
+    // Verify downloaded size
+    const stat = fs.statSync(tmpPath)
+    if (stat.size < 10 * 1024 * 1024) {
+      throw new Error(`Downloaded model file is too small or incomplete (${stat.size} bytes)`)
+    }
+
+    // Atomically replace target zip
+    if (fs.existsSync(zipPath)) {
+      fs.unlinkSync(zipPath)
+    }
+    fs.renameSync(tmpPath, zipPath)
+
+    // Extract zip (for local directory usage if needed)
+    try {
+      log.info('Extracting model...')
+      mainEventBus.emit('stt:model-status', { downloaded: false, progress: 95 })
+      await extractZip(zipPath, root, language)
+    } catch (extractErr) {
+      log.warn('Folder extraction skipped or failed (vosk-browser loads zip directly):', extractErr)
+    }
 
     mainEventBus.emit('stt:model-status', { downloaded: true, progress: 100 })
-    log.info(`Model for '${language}' ready at ${modelPath(language)}`)
+    log.info(`Model for '${language}' ready at ${zipPath}`)
   } catch (err) {
-    // Cleanup on failure
-    try { fs.unlinkSync(zipPath) } catch { /* ignore */ }
     const message = err instanceof Error ? err.message : String(err)
     mainEventBus.emit('stt:model-status', { downloaded: false, error: message })
     throw err
@@ -146,23 +192,53 @@ function downloadFile(
   onProgress: (percent: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let redirectCount = 0
+    const maxRedirects = 5
+
     const doRequest = (reqUrl: string) => {
-      const client = reqUrl.startsWith('https') ? https : http
-      client.get(reqUrl, (res) => {
+      let existingSize = 0
+      if (fs.existsSync(dest)) {
+        try {
+          existingSize = fs.statSync(dest).size
+        } catch {
+          existingSize = 0
+        }
+      }
+
+      const parsedUrl = new URL(reqUrl)
+      const client = parsedUrl.protocol === 'https:' ? https : http
+
+      const headers: Record<string, string> = {
+        'User-Agent': 'EVA-01-ModelManager/1.0',
+      }
+      if (existingSize > 0) {
+        headers['Range'] = `bytes=${existingSize}-`
+      }
+
+      const req = client.get(reqUrl, { headers }, (res) => {
         // Follow redirects
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          doRequest(res.headers.location)
+          if (++redirectCount > maxRedirects) {
+            reject(new Error('Too many redirects'))
+            return
+          }
+          const nextUrl = new URL(res.headers.location, reqUrl).toString()
+          doRequest(nextUrl)
           return
         }
 
-        if (res.statusCode !== 200) {
+        if (res.statusCode !== 200 && res.statusCode !== 206) {
           reject(new Error(`Download failed: HTTP ${res.statusCode}`))
           return
         }
 
-        const total = parseInt(res.headers['content-length'] || '0', 10)
-        let received = 0
-        const file = createWriteStream(dest)
+        const isPartial = res.statusCode === 206
+        const total = isPartial
+          ? (parseInt(res.headers['content-range']?.split('/')[1] || '0', 10) || (parseInt(res.headers['content-length'] || '0', 10) + existingSize))
+          : parseInt(res.headers['content-length'] || '0', 10)
+
+        let received = isPartial ? existingSize : 0
+        const file = createWriteStream(dest, { flags: isPartial ? 'a' : 'w' })
 
         res.on('data', (chunk: Buffer) => {
           received += chunk.length
@@ -172,7 +248,9 @@ function downloadFile(
         })
 
         pipeline(res, file).then(resolve).catch(reject)
-      }).on('error', reject)
+      })
+
+      req.on('error', reject)
     }
 
     doRequest(url)

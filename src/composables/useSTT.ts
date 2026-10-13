@@ -120,9 +120,42 @@ function initVisibilityWatch() {
   })
 }
 
+let lastVoiceEnergyTime = 0
+let hasSpokenSinceActivation = false
+
+function detectSilenceByEnergy(samples: Float32Array): void {
+  if (phase.value !== 'activated' && phase.value !== 'listening') return
+
+  let sum = 0
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] * samples[i]
+  }
+  const rms = Math.sqrt(sum / samples.length)
+  const SPEECH_THRESHOLD = 0.015
+
+  const now = Date.now()
+  if (rms > SPEECH_THRESHOLD) {
+    lastVoiceEnergyTime = now
+    if (!hasSpokenSinceActivation) {
+      hasSpokenSinceActivation = true
+      phase.value = 'listening'
+      transcript.value = 'Listening...'
+    }
+  } else if (hasSpokenSinceActivation && now - lastVoiceEnergyTime > 1200) {
+    hasSpokenSinceActivation = false
+    console.info('[useSTT] Silence detected via audio energy -> submitting transcript')
+    submitTranscript()
+  }
+}
+
 function activateWithoutWakeWord(): void {
   if (isSettingsOpen.value) return
+  if (!mediaStream) {
+    startMic().catch((err) => console.error('[useSTT] Failed to start mic on activation:', err))
+  }
   lastSeenPartial = ''
+  hasSpokenSinceActivation = false
+  lastVoiceEnergyTime = Date.now()
   phase.value = 'activated'
   transcript.value = ''
   chunks.value = []
@@ -166,13 +199,48 @@ function initMicHotkeyWatch(): void {
   })
 }
 
+let modelStatusSubscribed = false
+
+function initModelStatusWatch(): void {
+  if (modelStatusSubscribed) return
+  modelStatusSubscribed = true
+
+  api.audio.onSTTModelStatus.subscribe(undefined, {
+    onData(data) {
+      if (data.downloaded) {
+        console.info('[useSTT] STT model download ready event received, loading model...')
+        loadModel().catch((err) => {
+          console.error('[useSTT] Failed to load model after download event:', err)
+        })
+      }
+    },
+  })
+}
+
 initTTSWatch()
 initMicHotkeyWatch()
+initModelStatusWatch()
 
 // ── Model ──
 
+function attachRecognizer(): void {
+  if (!model || recognizer) return
+  try {
+    recognizer = new model.KaldiRecognizer(16000)
+    recognizer.on('result', onResult)
+    recognizer.on('partialresult', onPartialResult)
+    console.info('[useSTT] KaldiRecognizer attached to audio stream')
+  } catch (err) {
+    console.error('[useSTT] Failed to instantiate KaldiRecognizer:', err)
+  }
+}
+
 async function loadModel(): Promise<void> {
-  if (model) return
+  if (model) {
+    attachRecognizer()
+    return
+  }
+  if (isModelLoading.value) return
 
   isModelLoading.value = true
   try {
@@ -181,11 +249,11 @@ async function loadModel(): Promise<void> {
 
     model = await Vosk.createModel(`stt-model://${language}.zip`)
     isModelLoaded.value = true
-    console.info('[useSTT] Model loaded')
+    attachRecognizer()
+    console.info('[useSTT] Vosk Model loaded and wake-word recognizer active')
   } catch (err) {
-    console.error('[useSTT] Failed to load model:', err)
+    console.warn('[useSTT] Vosk model not available yet or failed to load:', err)
     isModelLoaded.value = false
-    throw err
   } finally {
     isModelLoading.value = false
   }
@@ -194,33 +262,41 @@ async function loadModel(): Promise<void> {
 // ── Mic lifecycle ──
 
 async function startMic(): Promise<void> {
-  if (!model) await loadModel()
-  if (!model) return
+  if (mediaStream) return
 
-  const sampleRate = 16000
-
-  recognizer = new model.KaldiRecognizer(16000)
-  recognizer.on('result', onResult)
-  recognizer.on('partialresult', onPartialResult)
+  if (!model) {
+    loadModel().catch(() => {})
+  }
 
   const cfg = await api.settings.getConfig.query()
   if (cfg.stt.wakeWord) customWakeWord.value = cfg.stt.wakeWord
   const micDeviceId = cfg.stt.micDeviceId && cfg.stt.micDeviceId !== 'default' ? cfg.stt.micDeviceId : ''
 
-  mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: micDeviceId
-      ? {
-          deviceId: { exact: micDeviceId },
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        }
-      : {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-  })
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: micDeviceId
+        ? {
+            deviceId: { ideal: micDeviceId },
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+          }
+        : {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+    })
+  } catch (deviceErr) {
+    console.warn('[useSTT] getUserMedia failed with specified micDeviceId, falling back to default device:', deviceErr)
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    })
+  }
 
   audioContext = new AudioContext()
   if (audioContext.state === 'suspended') {
@@ -251,7 +327,6 @@ async function startMic(): Promise<void> {
   await audioContext.audioWorklet.addModule(createWorkletBlob())
   const workletNode = new AudioWorkletNode(audioContext, 'stt-processor')
   workletNode.port.onmessage = (e) => {
-    if (!recognizer) return
     const samples = e.data as Float32Array
 
     // Maintain a rolling 2-second buffer during idle so audio spoken before/during
@@ -268,11 +343,15 @@ async function startMic(): Promise<void> {
       recordedBuffers.push(new Float32Array(samples))
     }
 
-    // Vosk recognizer expects exactly 16000Hz audio
-    const samples16k = resampleTo16k(samples, actualRate)
-    const buf = audioContext!.createBuffer(1, samples16k.length, 16000)
-    buf.getChannelData(0).set(samples16k)
-    recognizer.acceptWaveform(buf)
+    if (recognizer) {
+      // Vosk recognizer expects exactly 16000Hz audio
+      const samples16k = resampleTo16k(samples, actualRate)
+      const buf = audioContext!.createBuffer(1, samples16k.length, 16000)
+      buf.getChannelData(0).set(samples16k)
+      recognizer.acceptWaveform(buf)
+    } else if (phase.value === 'activated' || phase.value === 'listening') {
+      detectSilenceByEnergy(samples)
+    }
   }
   sourceNode.connect(workletNode)
   const silentGain = audioContext.createGain()
@@ -283,7 +362,7 @@ async function startMic(): Promise<void> {
   phase.value = 'idle'
   initVisibilityWatch()
   initConfigWatch()
-  console.info('[useSTT] Mic started, listening for wake word...')
+  console.info('[useSTT] Mic started, ready for voice and wake word')
 }
 
 function stopMic(): void {
@@ -393,38 +472,42 @@ function getWakeWords(): string[] {
   const configured = (customWakeWord.value || 'eva-01').toLowerCase().trim()
 
   const words = new Set<string>()
-  if (configured) {
-    words.add(configured)
-    if (configured.includes('eva')) {
+  const addVariations = (base: string) => {
+    words.add(base)
+    if (base.includes('eva') || base === 'eva-01' || base === 'eva') {
       words.add('eva-01')
       words.add('eva 01')
       words.add('eva one')
       words.add('eva')
       words.add('ever')
       words.add('ava')
+      words.add('iva')
+      words.add('he ever')
+      words.add('hey ever')
+      words.add('hey eva')
+      words.add('hey ava')
+      words.add('hey iva')
+      words.add('hi eva')
+      words.add('hi ever')
+      words.add('hello eva')
+      words.add('ok eva')
+      words.add('okay eva')
     }
   }
-  if (personaName) {
-    words.add(personaName)
-    if (personaName.includes('eva')) {
-      words.add('eva-01')
-      words.add('eva 01')
-      words.add('eva one')
-      words.add('eva')
-      words.add('ever')
-      words.add('ava')
-    }
-  }
+
+  if (configured) addVariations(configured)
+  if (personaName) addVariations(personaName)
   // Backwards compatibility alias
   words.add('atlas')
+  words.add('hey atlas')
 
   return Array.from(words)
 }
 
 function containsWakeWord(text: string): boolean {
-  const lower = text.toLowerCase()
+  const lower = text.toLowerCase().trim()
   return getWakeWords().some((w) => {
-    const regex = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+    const regex = new RegExp(`(^|\\b|\\s)${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s|$)`, 'i')
     return regex.test(lower)
   })
 }
@@ -465,6 +548,7 @@ function onResult(msg: any): void {
   if (Date.now() - lastSubmitTime < 500) return
 
   if (phase.value === 'idle') {
+    console.info('[useSTT] Idle speech recognized:', text)
     if (containsWakeWord(text)) {
       activate(text)
     }
@@ -631,14 +715,21 @@ async function submitTranscript(): Promise<void> {
   // Clean any leading punctuation or conversational filler ("ah", "um", "uh", "hey")
   fullText = stripWakeWord(fullText)
   fullText = fullText.replace(/^[,.:;!?-]+/, '').replace(/^(ah|um|uh|er|eh|hey|hi|yo)\s+/i, '').trim()
-  if (!fullText) return
+  if (!fullText) {
+    if (phase.value === 'activated' || phase.value === 'listening') {
+      console.info('[useSTT] Wake word invoked without command -> greeting user')
+      fullText = 'Hello!'
+    } else {
+      return
+    }
+  }
 
   // Discard empty/hallucinated bracketed tokens (e.g. [BLANK_AUDIO], [TAKE VO], [MUSIC], (silence)) or repetition loops
   const isGarbageToken = (t: string) => {
-    const stripped = t.replace(/[\[\({][^\]\)}]*[\]\)}]/g, '').trim()
+    const stripped = t.replace(/[([{][^\])}]*[\])}]/g, '').trim()
     if (!stripped) return true
-    if (/^(he ever|yeah ever|take vo|blank audio|you|subtitles by|thank you for watching)$/i.test(stripped)) return true
-    // Repeated 2-word loop e.g. "he ever he ever"
+    if (/^(take vo|blank audio|subtitles by|thank you for watching)$/i.test(stripped)) return true
+    // Repeated 2-word loop e.g. "ever ever ever"
     if (/^(\b\w+\s+\w+\b)(?:\s+\1)+$/i.test(stripped)) return true
     return false
   }

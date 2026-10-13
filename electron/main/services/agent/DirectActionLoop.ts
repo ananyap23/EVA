@@ -457,7 +457,7 @@ export async function runDirectAction(
         }
 
         // Check for "search <query> on/in/with <browser>" pattern
-        const searchOnBrowserMatch = lowerCmd.match(/^(?:please\s+)?(?:search|look up|google|find)\s+(.+?)\s+(?:on|in|using|with)\s+(?:the\s+)?([a-z0-9_\-\.\s]+?)(?:\s+browser|\s+app)?$/i)
+        const searchOnBrowserMatch = lowerCmd.match(/^(?:please\s+)?(?:search|look up|google|find)\s+(.+?)\s+(?:on|in|using|with)\s+(?:the\s+)?([a-z0-9_.\s-]+?)(?:\s+browser|\s+app)?$/i)
         if (searchOnBrowserMatch && searchOnBrowserMatch[1] && searchOnBrowserMatch[2]) {
           const rawQuery = searchOnBrowserMatch[1].trim()
           const query = encodeURIComponent(rawQuery)
@@ -468,7 +468,7 @@ export async function runDirectAction(
           log.info(`[DirectAction] Auto-synthesized search on browser: "${resolvedCommand}" from user input "${command}"`)
         } else {
           // Check for "open/launch <app>" pattern
-          const openMatch = lowerCmd.match(/^(?:please\s+)?(?:open|launch|start|run)\s+(?:the\s+)?([a-z0-9_\-\.\s]+?)(?:\s+browser|\s+app|\s+application)?$/i)
+          const openMatch = lowerCmd.match(/^(?:please\s+)?(?:open|launch|start|run)\s+(?:the\s+)?([a-z0-9_.\s-]+?)(?:\s+browser|\s+app|\s+application)?$/i)
           if (openMatch && openMatch[1]) {
             const rawApp = openMatch[1].trim()
             const mapped = appMap[rawApp] || rawApp

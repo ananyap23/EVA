@@ -109,7 +109,7 @@ export async function createWindow(): Promise<BrowserWindow> {
       console.error(`[${time}] [ERROR] [UI] ${clean}`)
     } else if (level === 2) {
       console.warn(`[${time}] [WARN] [UI] ${clean}`)
-    } else if (/Auto-submit|sendCommand|Voice recognized/i.test(clean)) {
+    } else if (/Auto-submit|sendCommand|Voice recognized|useSTT|Idle speech|Wake word/i.test(clean)) {
       console.log(`[${time}] [INFO] [UI] ${clean}`)
     }
   })

@@ -20,6 +20,7 @@ async function run() {
 
   const psScriptPath = path.join(__dirname, 'electron/main/services/vision/get_screen_state.ps1');
   const t0 = Date.now();
+  let raw = '';
 
   try {
     const { stdout, stderr } = await execFileAsync(
@@ -33,7 +34,7 @@ async function run() {
       console.warn('⚠️ PowerShell Warning/Error:\n', stderr.trim());
     }
 
-    const raw = stdout.trim();
+    raw = stdout.trim();
     if (!raw) {
       console.log('❌ No output returned from PowerShell.');
       return;

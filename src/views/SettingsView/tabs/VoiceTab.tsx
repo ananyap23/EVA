@@ -277,7 +277,8 @@ export default defineComponent({
             message: `Connected! Found ${res.whisperModels.length} Groq Whisper model(s)`,
           }
           if (autoSelect || !props.config.stt.whisperModel || !res.whisperModels.includes(props.config.stt.whisperModel)) {
-            props.config.stt.whisperModel = res.whisperModels[0] || 'whisper-large-v3-turbo'
+            const selectedModel = res.whisperModels[0] || 'whisper-large-v3-turbo'
+            emit('update', 'stt', { ...props.config.stt, whisperModel: selectedModel })
           }
         } else if ('error' in res && (res as any).error) {
           groqStatus.value = { ok: false, message: String((res as any).error) }
