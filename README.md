@@ -166,4 +166,5 @@ Contributions are welcome! Feel free to open an issue or submit a pull request.
 
 <p align="center">
   Vibecoded with ❤️ by <a href="https://github.com/dortanes">dortanes</a>
-</p>
+</p>#   E V A  
+ 
